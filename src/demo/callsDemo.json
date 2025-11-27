@@ -1,0 +1,47 @@
+{
+  "rows": [
+    {
+      "Assigned": "Casey SDR",
+      "Call Disposition": "Connected",
+      "Date": "2025-07-04T10:05:00Z",
+      "Company / Account": "Acme Corp",
+      "Contact": "Alex Rivera",
+      "Call Duration": "290"
+    },
+    {
+      "Assigned": "Jordan SDR",
+      "Call Disposition": "Left Voicemail",
+      "Date": "2025-07-04T13:20:00Z",
+      "Company / Account": "Orbit Labs",
+      "Contact": "Bri Chen",
+      "Call Duration": "180"
+    },
+    {
+      "Assigned": "Casey SDR",
+      "Call Disposition": "Connected",
+      "Date": "2025-07-05T15:40:00Z",
+      "Company / Account": "Nova AI",
+      "Contact": "Chris Patel",
+      "Call Duration": "420"
+    },
+    {
+      "Assigned": "Casey SDR",
+      "Call Disposition": "No Answer",
+      "Date": "2025-07-05T16:10:00Z",
+      "Company / Account": "Acme Corp",
+      "Contact": "Alex Rivera",
+      "Call Duration": "60"
+    }
+  ],
+  "stats": {
+    "totalCalls": 4,
+    "uniqueCompanies": 3,
+    "connectRate": 50,
+    "durationHours": 0.26,
+    "uniqueContacts": 3,
+    "topDisposition": "Connected",
+    "dispositionTypes": 3,
+    "dailyAvg": 2
+  }
+}
+

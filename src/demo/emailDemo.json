@@ -1,0 +1,59 @@
+{
+  "successful": [
+    {
+      "recipient_name": "Alex Rivera",
+      "Recipient Email": "alex@acme.com",
+      "Views": 5,
+      "Clicks": 1,
+      "sent_date": "03/07/2025 09:14:21",
+      "Company": "Acme Corp",
+      "Account Owner": "Casey SDR",
+      "SDR_Name": "Casey SDR",
+      "Domain": "acme.com"
+    },
+    {
+      "recipient_name": "Bri Chen",
+      "Recipient Email": "bri@orbit.io",
+      "Views": 3,
+      "Clicks": 0,
+      "sent_date": "04/07/2025 12:02:10",
+      "Company": "Orbit Labs",
+      "Account Owner": "Jordan SDR",
+      "SDR_Name": "Jordan SDR",
+      "Domain": "orbit.io"
+    },
+    {
+      "recipient_name": "Chris Patel",
+      "Recipient Email": "chris@nova.ai",
+      "Views": 6,
+      "Clicks": 2,
+      "sent_date": "05/07/2025 15:44:05",
+      "Company": "Nova AI",
+      "Account Owner": "Casey SDR",
+      "SDR_Name": "Casey SDR",
+      "Domain": "nova.ai"
+    }
+  ],
+  "failed": [
+    {
+      "recipient_name": "Jamie Lee",
+      "Recipient Email": "jamie@loopwork.co",
+      "failure_reason": "no_open_records_for_email"
+    },
+    {
+      "recipient_name": "Morgan Gray",
+      "Recipient Email": "morgan@spire.dev",
+      "failure_reason": "invalid_send_date"
+    }
+  ],
+  "stats": {
+    "total_send_records": 5,
+    "total_open_records": 5,
+    "total_contact_records": 5,
+    "send_open_success": 3,
+    "send_open_failures": 2,
+    "contact_join_success": 3,
+    "contact_join_failures": 0
+  }
+}
+

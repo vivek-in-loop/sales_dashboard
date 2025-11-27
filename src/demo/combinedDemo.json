@@ -1,0 +1,60 @@
+{
+  "records": [
+    {
+      "recipient_name": "Alex Rivera",
+      "Recipient Email": "alex@acme.com",
+      "Company": "Acme Corp",
+      "Views": 5,
+      "Clicks": 1,
+      "total_calls": 2,
+      "connected_calls": 1,
+      "total_call_duration": 350,
+      "latest_call_date": "2025-07-05T16:10:00.000Z",
+      "_companyLabel": "Acme Corp"
+    },
+    {
+      "recipient_name": "Bri Chen",
+      "Recipient Email": "bri@orbit.io",
+      "Company": "Orbit Labs",
+      "Views": 3,
+      "Clicks": 0,
+      "total_calls": 1,
+      "connected_calls": 0,
+      "total_call_duration": 180,
+      "latest_call_date": "2025-07-04T13:20:00.000Z",
+      "_companyLabel": "Orbit Labs"
+    },
+    {
+      "recipient_name": "Chris Patel",
+      "Recipient Email": "chris@nova.ai",
+      "Company": "Nova AI",
+      "Views": 6,
+      "Clicks": 2,
+      "total_calls": 1,
+      "connected_calls": 1,
+      "total_call_duration": 420,
+      "latest_call_date": "2025-07-05T15:40:00.000Z",
+      "_companyLabel": "Nova AI"
+    },
+    {
+      "recipient_name": "Jamie Lee",
+      "Recipient Email": "jamie@loopwork.co",
+      "Company": "Loopwork",
+      "Views": 0,
+      "Clicks": 0,
+      "total_calls": 0,
+      "connected_calls": 0,
+      "total_call_duration": 0,
+      "latest_call_date": null,
+      "_companyLabel": "Loopwork"
+    }
+  ],
+  "stats": {
+    "totalEmailRecords": 4,
+    "emailCallMatches": 3,
+    "emailOnlyCount": 1,
+    "joinSuccessRate": 75,
+    "totalCalls": 4
+  }
+}
+
