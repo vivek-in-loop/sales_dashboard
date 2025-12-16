@@ -175,11 +175,11 @@ function EmailAnalyticsPage() {
     const final_data = filteredForAnalysis;
     
     // Stage 1: Total Sends (from send data - use stats or filtered data length)
-    const totalSends = final_data.length;
+    const totalSends = emailData.stats?.total_send_records || 0;
     
     // Stage 1: Total Prospect Count - unique Recipient Emails
     const totalProspects = new Set(
-      final_data.map(r => r["Recipient Email"] || r.Email).filter(Boolean)
+      final_data.map(r => r["Recipient Email"] || r['recipient_email']).filter(Boolean)
     ).size;
     
     // Stage 2: Records with actual opens (non-null, non-empty Views)
