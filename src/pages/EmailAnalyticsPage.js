@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from "react";
+import Papa from "papaparse";
+import { useEffect } from "react";
 import {
   Alert,
   Avatar,
@@ -118,6 +120,12 @@ function EmailAnalyticsPage() {
   const canProcess =
     mode === "upload" && !!contactsFile && readySdrs && !loading;
 
+
+
+
+
+
+    
   const filteredForAnalysis = useMemo(() => {
     let data = emailData.successful;
     
@@ -288,6 +296,78 @@ function EmailAnalyticsPage() {
       return haystack.includes(term);
     });
   }, [emailData.failed, filters.search]);
+
+  // useEffect(() => {
+  //   console.log("Filtered failed emails (UI):", filteredFailed);
+  
+  //   if (!filteredFailed || filteredFailed.length === 0) return;
+  
+  //   // ❌ Exclude @loopwork.co ONLY for download
+  //   const exportData = filteredFailed.filter((row) => {
+  //     const email = row["Recipient Email"]?.toLowerCase();
+  //     return !(email && email.endsWith("@loopwork.co"));
+  //   });
+  
+  //   if (exportData.length === 0) return;
+  
+  //   const csv = Papa.unparse(exportData);
+  
+  //   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  //   const url = URL.createObjectURL(blob);
+  
+  //   const link = document.createElement("a");
+  //   link.href = url;
+  //   link.download = "failed-emails.csv";
+  //   link.click();
+  
+  //   URL.revokeObjectURL(url);
+  // }, [filteredFailed]);
+  
+  const handleDownloadSuccessfulContacts = () => {
+    if (!filteredSuccess || filteredSuccess.length === 0) {
+      alert("No successful contacts to download.");
+      return;
+    }
+
+    const csv = Papa.unparse(filteredSuccess);
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "successful-emails.csv";
+    link.click();
+
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadFailedContacts = () => {
+    if (!filteredFailed || filteredFailed.length === 0) return;
+  
+    // ❌ Exclude @loopwork.co ONLY for download
+    const exportData = filteredFailed.filter((row) => {
+      const email = row["Recipient Email"]?.toLowerCase();
+      return !(email && email.endsWith("@loopwork.co"));
+    });
+  
+    if (exportData.length === 0) {
+      alert("No failed contacts to download after filtering.");
+      return;
+    }
+  
+    const csv = Papa.unparse(exportData);
+  
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+  
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "failed-emails.csv";
+    link.click();
+  
+    URL.revokeObjectURL(url);
+  };
 
   const trendData = useMemo(
     () => buildTrend(filteredForAnalysis, filters.metric, filters.timePeriod, filters.dateRange),
@@ -1545,7 +1625,7 @@ function EmailAnalyticsPage() {
                           value: derivedMetrics.highEngagement.toLocaleString(),
                           helper: "Views > 2× emails",
                           delay: 900,
-                          color: "warning",
+                          color: "success",
                         },
                       ].map((kpi, idx) => (
                         <Grid item xs={12} sm={6} md={4} lg={2.4} key={kpi.title}>
@@ -1969,7 +2049,7 @@ function EmailAnalyticsPage() {
                                         bgcolor: isTopThree ? "#FFF3E0" : "#F5F5F5",
                                         color: isTopThree ? "#E65100" : "text.primary",
                                         fontWeight: 700,
-                                        border: isTopThree ? "2px solid #FF9800" : "1px solid #E0E0E0",
+                                        border: isTopThree ? "2px solid #6033d7" : "1px solid #E0E0E0",
                                         fontSize: "0.85rem",
                                         px: 1.5,
                                       }}
@@ -1993,7 +2073,7 @@ function EmailAnalyticsPage() {
                 </Grow>
               )}
 
-              {emailData.sdrStats?.length ? (
+              {/* {emailData.sdrStats?.length ? (
                 <Slide direction="up" in timeout={600}>
                   <Card
                     elevation={2}
@@ -2037,7 +2117,7 @@ function EmailAnalyticsPage() {
                     </CardContent>
                   </Card>
                 </Slide>
-              ) : null}
+              ) : null} */}
 
 
               {/* Daily/Monthly Engagement Trend */}
@@ -2210,7 +2290,7 @@ function EmailAnalyticsPage() {
                     sx={{
                       bgcolor: "#FFF3E0",
                       p: 2,
-                      borderBottom: "2px solid #FF9800",
+                      borderBottom: "2px solid #6033d7",
                     }}
                   >
                     <Stack direction="row" alignItems="center" spacing={2}>
@@ -2353,14 +2433,14 @@ function EmailAnalyticsPage() {
                         width: 56,
                         height: 56,
                         borderRadius: 3,
-                        bgcolor: "#FFF3E0",
+                        bgcolor: "#E8EAF6",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        border: "2px solid #FF9800",
+                        border: "2px solid #6033d7",
                       }}
                     >
-                      <LocalFireDepartment sx={{ fontSize: 32, color: "#F57C00" }} />
+                      <LocalFireDepartment sx={{ fontSize: 32, color: "#6033d7" }} />
                     </Box>
                     <Box>
                       <Typography variant="h4" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
@@ -2380,7 +2460,7 @@ function EmailAnalyticsPage() {
                       sx={{
                         bgcolor: "#FFFFFF",
                         borderRadius: 3,
-                        border: "2px solid #FF9800",
+                        border: "2px solid #6033d7",
                         overflow: "hidden",
                         transition: "all 0.3s",
                         "&:hover": {
@@ -2390,9 +2470,9 @@ function EmailAnalyticsPage() {
                     >
                       <Box
                         sx={{
-                          bgcolor: "#FFF3E0",
+                          bgcolor: "#E8EAF6",
                           p: 2,
-                          borderBottom: "2px solid #FF9800",
+                          borderBottom: "2px solid #6033d7",
                         }}
                       >
                         <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
@@ -2410,15 +2490,15 @@ function EmailAnalyticsPage() {
                               elevation={0}
                               sx={{
                                 p: 3,
-                                bgcolor: idx % 2 === 0 ? "#FAFAFA" : "#FFFFFF",
+                                bgcolor: idx % 2 === 0 ? "#F5F5F5" : "#FFFFFF",
                                 borderRadius: 2,
                                 border: "1px solid #E0E0E0",
-                                borderLeft: "4px solid #FF9800",
+                                borderLeft: "4px solidrgb(90, 162, 210)",
                                 transition: "all 0.3s ease-in-out",
                                 "&:hover": {
-                                  bgcolor: "#FFF8E1",
+                                  bgcolor: "#E8EAF6",
                                   transform: "translateX(8px)",
-                                  borderLeftColor: "#F57C00",
+                                  borderLeftColor: "#6033d7",
                                   boxShadow: "0 4px 16px rgba(255, 152, 0, 0.2)",
                                 },
                               }}
@@ -2429,15 +2509,15 @@ function EmailAnalyticsPage() {
                                     width: 48,
                                     height: 48,
                                     borderRadius: 2,
-                                    bgcolor: "#FFF3E0",
+                                    bgcolor: "#E8EAF6",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    border: "2px solid #FF9800",
+                                    border: "2px solid #6033d7",
                                     flexShrink: 0,
                                   }}
                                 >
-                                  <LocalFireDepartment sx={{ fontSize: 28, color: "#F57C00" }} />
+                                  <LocalFireDepartment sx={{ fontSize: 28, color: "#6033d7" }} />
                                 </Box>
                                 <Box sx={{ flexGrow: 1 }}>
                                   <Stack direction="row" alignItems="center" spacing={1} mb={1}>
@@ -2455,7 +2535,7 @@ function EmailAnalyticsPage() {
                                       label="HIGH"
                                       size="small"
                                       sx={{
-                                        bgcolor: "#FF9800",
+                                        bgcolor: "#6033d7",
                                         color: "white",
                                         fontWeight: 700,
                                         fontSize: "0.7rem",
@@ -2466,10 +2546,10 @@ function EmailAnalyticsPage() {
                                       label={`${company.engagementRate.toFixed(0)}%`}
                                       size="small"
                                       sx={{
-                                        bgcolor: "#FFF3E0",
+                                        bgcolor: "#E8EAF6",
                                         color: "#000000",
                                         fontWeight: 700,
-                                        border: "1px solid #FF9800",
+                                        border: "1px solidrgb(54, 173, 213)",
                                         fontSize: "0.8rem",
                                       }}
                                     />
@@ -2497,7 +2577,7 @@ function EmailAnalyticsPage() {
                                         bgcolor: "#E0E0E0",
                                         boxShadow: "inset 0 1px 3px rgba(0,0,0,0.1)",
                                         "& .MuiLinearProgress-bar": {
-                                          bgcolor: "#FF9800",
+                                          bgcolor: "#6033d7",
                                           borderRadius: 4,
                                           boxShadow: "0 2px 8px rgba(255, 152, 0, 0.4)",
                                         },
@@ -2837,6 +2917,7 @@ function EmailAnalyticsPage() {
                                 height: 24,
                               }}
                             />
+                                                <Button variant="contained" color="primary" onClick={handleDownloadSuccessfulContacts}>Export CSV</Button>
                           </Stack>
                         }
                       />
@@ -2854,10 +2935,13 @@ function EmailAnalyticsPage() {
                                 height: 24,
                               }}
                             />
+                               <Button variant="contained" color="error" onClick={handleDownloadFailedContacts}>Export CSV</Button>
                           </Stack>
                         }
                       />
                     </Tabs>
+                 
+
                     <Box mt={2}>
                       {tableTab === 0 ? (
                         <DataTable
