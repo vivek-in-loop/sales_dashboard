@@ -281,21 +281,21 @@ function EmailAnalyticsPage() {
     return data;
   }, [filteredForAnalysis, filters.search]);
 
-  const filteredFailed = useMemo(() => {
-    const term = filters.search.toLowerCase();
-    if (!term) return emailData.failed;
-    return emailData.failed.filter((row) => {
-      const haystack = [
-        row.recipient_name,
-        row["Recipient Email"],
-        row.failure_reason,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(term);
-    });
-  }, [emailData.failed, filters.search]);
+  // const filteredFailed = useMemo(() => {
+  //   const term = filters.search.toLowerCase();
+  //   if (!term) return emailData.failed;
+  //   return emailData.failed.filter((row) => {
+  //     const haystack = [
+  //       row.recipient_name,
+  //       row["Recipient Email"],
+  //       row.failure_reason,
+  //     ]
+  //       .filter(Boolean)
+  //       .join(" ")
+  //       .toLowerCase();
+  //     return haystack.includes(term);
+  //   });
+  // }, [emailData.failed, filters.search]);
 
   // useEffect(() => {
   //   console.log("Filtered failed emails (UI):", filteredFailed);
@@ -323,6 +323,34 @@ function EmailAnalyticsPage() {
   //   URL.revokeObjectURL(url);
   // }, [filteredFailed]);
   
+  const filteredFailed = useMemo(() => {
+    const term = filters.search.toLowerCase();
+  
+    return emailData.failed.filter((row) => {
+      const email = row["Recipient Email"]?.toLowerCase() || "";
+  
+      // ❌ exclude @loopwork.co emails
+      if (email.endsWith("@loopwork.co")) {
+        return false;
+      }
+  
+      // If no search term, keep all non-loopwork emails
+      if (!term) return true;
+  
+      const haystack = [
+        row.recipient_name,
+        email,
+        row.failure_reason,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+  
+      return haystack.includes(term);
+    });
+  }, [emailData.failed, filters.search]);
+  
+
   const handleDownloadSuccessfulContacts = () => {
     if (!filteredSuccess || filteredSuccess.length === 0) {
       alert("No successful contacts to download.");
