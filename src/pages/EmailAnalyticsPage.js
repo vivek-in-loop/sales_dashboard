@@ -37,6 +37,7 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
   Zoom,
 } from "@mui/material";
@@ -55,6 +56,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
   Warning as WarningIcon,
+  InfoOutlined,
 } from "@mui/icons-material";
 import { startOfWeek, startOfMonth, format, eachWeekOfInterval, eachMonthOfInterval, isWithinInterval } from "date-fns";
 import Plot from "react-plotly.js";
@@ -73,7 +75,6 @@ import {
   runDataValidation,
   formatValidationReport,
 } from "../utils/dataChecker";
-import demoEmailData from "../demo/emailDemo.json";
 
 const metricOptions = [
   { value: "Views", label: "Views" },
@@ -87,6 +88,17 @@ const templateMap = {
   contacts:
     "Email,Company,Account Owner,Title,Company URL ID\njane@example.com,Example Inc,Alex SDR,VP,URL-123",
 };
+
+const SECTION_NAV = [
+  { id: "section-overview", label: "Overview" },
+  { id: "section-filters", label: "Filters" },
+  { id: "section-kpis", label: "KPIs" },
+  { id: "section-leaderboard", label: "SDR Leaderboard" },
+  { id: "section-trends", label: "Engagement Trend" },
+  { id: "section-companies", label: "Company Engagement" },
+  { id: "section-prospects", label: "Prospects" },
+  { id: "detailed-records", label: "Detailed Records" },
+];
 
 const createSdrEntry = () => ({
   id: Math.random().toString(36).slice(2),
@@ -114,18 +126,47 @@ function EmailAnalyticsPage() {
   const [tableTab, setTableTab] = useState(0);
   const [validationReport, setValidationReport] = useState(null);
   const [showValidation, setShowValidation] = useState(false);
+  const [companyDetailsOpen, setCompanyDetailsOpen] = useState(false);
+  const [selectedCompanyKey, setSelectedCompanyKey] = useState(null);
+  const [selectedCompanyLabel, setSelectedCompanyLabel] = useState("");
+  const [companyMatrixOpen, setCompanyMatrixOpen] = useState(false);
+  const [prospectsMatrixOpen, setProspectsMatrixOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState("section-overview");
 
   const hasResults = Boolean(emailData.stats);
   const readySdrs = sdrs.every((sdr) => sdr.sendFile && sdr.openFile);
   const canProcess =
     mode === "upload" && !!contactsFile && readySdrs && !loading;
 
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const id = entry.target.id;
+            setActiveSection(id);
+            window.dispatchEvent(
+              new CustomEvent("email-section-change", {
+                detail: { id },
+              })
+            );
+          }
+        });
+      },
+      {
+        threshold: 0.35,
+      }
+    );
+
+    SECTION_NAV.forEach((section) => {
+      const el = document.getElementById(section.id);
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, []);
 
 
-
-
-
-    
   const filteredForAnalysis = useMemo(() => {
     let data = emailData.successful;
     
@@ -154,6 +195,105 @@ function EmailAnalyticsPage() {
     return data;
   }, [emailData.successful, filters.sdrFilter, filters.dateRange]);
 
+  // Reconstruct filtered send-open dataset (all sends, including those without contacts)
+  const filteredSendOpen = useMemo(() => {
+    const successful = emailData.successful || [];
+    const contactFailures =
+      (emailData.failed || []).filter(
+        (row) => row.failure_reason === "Send email not found in contacts"
+      );
+
+    let data = [...successful, ...contactFailures];
+
+    // Apply SDR filter
+    if (filters.sdrFilter !== "all") {
+      data = data.filter((row) => {
+        const sdr = row.SDR_Name || row["Account Owner"] || "Unassigned";
+        return sdr === filters.sdrFilter;
+      });
+    }
+
+    // Apply date range filter
+    if (filters.dateRange?.start && filters.dateRange?.end) {
+      data = data.filter((row) => {
+        const raw =
+          row.sent_date_parsed instanceof Date
+            ? row.sent_date_parsed
+            : row.sent_date
+            ? new Date(row.sent_date)
+            : null;
+        if (!raw || isNaN(raw.getTime())) return false;
+        return isWithinInterval(raw, {
+          start: filters.dateRange.start,
+          end: filters.dateRange.end,
+        });
+      });
+    }
+
+    return data;
+  }, [emailData.successful, emailData.failed, filters.sdrFilter, filters.dateRange]);
+
+  // Helper to derive normalized company key from a row (must mirror buildCompanyEngagement logic)
+  function getCompanyNormalizedKey(row) {
+    let companyKey =
+      row.Company ||
+      row["Company Name"] ||
+      row["Company / Account"] ||
+      row.company ||
+      row["Account Name"] ||
+      null;
+
+    // Try to derive from Company URL if missing/unknown
+    if (!companyKey || companyKey === "Unknown" || companyKey === "") {
+      const companyUrl =
+        row["Company URL"] || row.CompanyURL || row["company_url"] || null;
+      if (companyUrl) {
+        let domain = String(companyUrl).trim();
+        domain = domain.replace(/^https?:\/\//, "");
+        domain = domain.replace(/^www\./, "");
+        domain = domain.split("/")[0];
+        domain = domain.split(":")[0];
+        if (domain) {
+          companyKey = domain;
+        }
+      }
+    }
+
+    // Fallback to email domain
+    if (!companyKey || companyKey === "Unknown" || companyKey === "") {
+      const email = row["Recipient Email"] || row.email || row.Email || null;
+      if (email) {
+        const emailDomain = String(email).split("@")[1];
+        if (emailDomain) {
+          companyKey = emailDomain;
+        }
+      }
+    }
+
+    // Final fallback
+    if (!companyKey || companyKey === "") {
+      companyKey = "Unknown";
+    }
+
+    return companyKey.toLowerCase().trim();
+  }
+
+  // Helper to format sent date for detail rows
+  function getSentDateDisplay(row) {
+    const rawDate =
+      row.sent_date_parsed instanceof Date
+        ? row.sent_date_parsed
+        : row.sent_date
+        ? new Date(row.sent_date)
+        : null;
+
+    if (!rawDate || Number.isNaN(rawDate.getTime())) {
+      return "";
+    }
+
+    return format(rawDate, "dd/MM/yyyy HH:mm");
+  }
+
   // Derive metrics from filtered data - Following exact KPI specifications
   const derivedMetrics = useMemo(() => {
     if (!hasResults) {
@@ -173,17 +313,21 @@ function EmailAnalyticsPage() {
     
     // final_data = Send + Open + Contacts joined (filtered)
     const final_data = filteredForAnalysis;
+    // send_open_df = all filtered send records (with Views/Clicks, may be null)
+    const send_open_df = filteredSendOpen;
     
-    // Stage 1: Total Sends (from send data - use stats or filtered data length)
-    const totalSends = emailData.stats?.total_send_records || 0;
+    // Stage 1: Total Sends (from send data - filtered)
+    const totalSends = send_open_df.length;
     
     // Stage 1: Total Prospect Count - unique Recipient Emails
     const totalProspects = new Set(
-      final_data.map(r => r["Recipient Email"] || r['recipient_email']).filter(Boolean)
+      send_open_df
+        .map((r) => r["Recipient Email"] || r.recipient_email)
+        .filter(Boolean)
     ).size;
     
     // Stage 2: Records with actual opens (non-null, non-empty Views)
-    const recordsWithOpens = final_data.filter(r => {
+    const recordsWithOpens = send_open_df.filter((r) => {
       const views = r.Views;
       return views != null && views !== '' && Number(views) > 0;
     });
@@ -195,7 +339,9 @@ function EmailAnalyticsPage() {
     
     // Stage 2: Opened Prospect Count - unique prospects with non-null Views
     const openedProspects = new Set(
-      recordsWithOpens.map(r => r["Recipient Email"] || r.Email).filter(Boolean)
+      recordsWithOpens
+        .map((r) => r["Recipient Email"] || r.recipient_email)
+        .filter(Boolean)
     ).size;
     
     // Stage 2: Prospect Opened % = (opened_prospect_count / total_prospect_count) * 100
@@ -204,13 +350,13 @@ function EmailAnalyticsPage() {
       : 0;
     
     // Stage 2: Total Views (sum from send-open data)
-    const totalViews = final_data.reduce(
+    const totalViews = send_open_df.reduce(
       (sum, row) => sum + (Number(row.Views) || 0),
       0
     );
     
     // Total Clicks
-    const totalClicks = final_data.reduce(
+    const totalClicks = send_open_df.reduce(
       (sum, row) => sum + (Number(row.Clicks) || 0),
       0
     );
@@ -223,10 +369,10 @@ function EmailAnalyticsPage() {
     ).size;
     
     // Stage 3: Contact Match Rate = (final_data.length / send_open_df.length) * 100
-    // Use stats if available, otherwise calculate from data
-    const contactMatch = emailData.stats?.send_open_success
-      ? (emailData.stats.contact_join_success / emailData.stats.send_open_success) * 100
-      : (final_data.filter(r => r.Email || r["Recipient Email"]).length / Math.max(1, final_data.length)) * 100;
+    const contactMatch =
+      send_open_df.length > 0
+        ? (final_data.length / send_open_df.length) * 100
+        : 0;
     
     // Stage 3: High Engagement Accounts
     // Group by Company URL and filter where total_views > 2 * total_emails
@@ -259,7 +405,139 @@ function EmailAnalyticsPage() {
       accountsOwned,
       highEngagement,
     };
-  }, [emailData, hasResults, filteredForAnalysis]);
+  }, [hasResults, filteredForAnalysis, filteredSendOpen]);
+
+  // Detail rows for the selected high engagement company (for "Know more" dialog)
+  const companyDetailRows = useMemo(() => {
+    if (!selectedCompanyKey) return [];
+
+    return filteredForAnalysis
+      .filter((row) => getCompanyNormalizedKey(row) === selectedCompanyKey)
+      .map((row, idx) => ({
+        id:
+          row["Recipient Email"] ||
+          row.Email ||
+          row.email ||
+          `row-${idx}`,
+        sent_date: getSentDateDisplay(row),
+        recipient_email:
+          row["Recipient Email"] || row.Email || row.email || "",
+        views:
+          row.Views != null && row.Views !== ""
+            ? Number(row.Views)
+            : 0,
+        clicks:
+          row.Clicks != null && row.Clicks !== ""
+            ? Number(row.Clicks)
+            : 0,
+      }));
+  }, [selectedCompanyKey, filteredForAnalysis]);
+
+  // Company & prospect engagement summaries (for sections + matrix)
+  const companyEngagement = useMemo(
+    () => buildCompanyEngagement(filteredForAnalysis),
+    [filteredForAnalysis]
+  );
+
+  const highEngagementProspects = useMemo(
+    () => buildHighEngagementProspects(filteredForAnalysis),
+    [filteredForAnalysis]
+  );
+
+  // Rows for full High Engagement Companies matrix (table view)
+  const companyMatrixRows = useMemo(() => {
+    if (!companyEngagement || !companyEngagement.highEngagementCompanies) {
+      return [];
+    }
+
+    return companyEngagement.highEngagementCompanies.map((company, idx) => ({
+      id: company.company || `company-${idx}`,
+      company: company.company,
+      emails: company.emails,
+      views:
+        company.views != null && company.views !== ""
+          ? Number(company.views)
+          : 0,
+      clicks:
+        company.clicks != null && company.clicks !== ""
+          ? Number(company.clicks)
+          : 0,
+      engagementRate:
+        company.engagementRate != null && company.engagementRate !== ""
+          ? Number(company.engagementRate).toFixed(1)
+          : "0.0",
+    }));
+  }, [companyEngagement]);
+
+  const handleExportHighEngagementCompanies = () => {
+    if (!companyMatrixRows.length) {
+      alert("No high engagement companies to export.");
+      return;
+    }
+
+    const csv = Papa.unparse(companyMatrixRows);
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "high-engagement-companies.csv";
+    link.click();
+
+    URL.revokeObjectURL(url);
+  };
+
+  // Rows for full High Engagement Prospects matrix (table view)
+  const prospectsMatrixRows = useMemo(() => {
+    if (
+      !highEngagementProspects ||
+      !highEngagementProspects.highEngagementProspects
+    ) {
+      return [];
+    }
+
+    return highEngagementProspects.highEngagementProspects.map(
+      (prospect, idx) => ({
+        id: prospect.prospectKey || `prospect-${idx}`,
+        prospectName: prospect.prospectName,
+        prospectEmail: prospect.prospectEmail,
+        company: prospect.company,
+        emails: prospect.emails,
+        views:
+          prospect.views != null && prospect.views !== ""
+            ? Number(prospect.views)
+            : 0,
+        clicks:
+          prospect.clicks != null && prospect.clicks !== ""
+            ? Number(prospect.clicks)
+            : 0,
+        engagementRate:
+          prospect.engagementRate != null && prospect.engagementRate !== ""
+            ? Number(prospect.engagementRate).toFixed(1)
+            : "0.0",
+      })
+    );
+  }, [highEngagementProspects]);
+
+  const handleExportHighEngagementProspects = () => {
+    if (!prospectsMatrixRows.length) {
+      alert("No high engagement prospects to export.");
+      return;
+    }
+
+    const csv = Papa.unparse(prospectsMatrixRows);
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "high-engagement-prospects.csv";
+    link.click();
+
+    URL.revokeObjectURL(url);
+  };
 
   const filteredSuccess = useMemo(() => {
     let data = filteredForAnalysis;
@@ -398,23 +676,19 @@ function EmailAnalyticsPage() {
   };
 
   const trendData = useMemo(
-    () => buildTrend(filteredForAnalysis, filters.metric, filters.timePeriod, filters.dateRange),
+    () =>
+      buildTrend(
+        filteredForAnalysis,
+        filters.metric,
+        filters.timePeriod,
+        filters.dateRange
+      ),
     [filteredForAnalysis, filters.metric, filters.timePeriod, filters.dateRange]
   );
 
   const sdrMatrix = useMemo(
     () => buildSdrMatrix(emailData.successful),
     [emailData.successful]
-  );
-
-  const companyEngagement = useMemo(
-    () => buildCompanyEngagement(filteredForAnalysis),
-    [filteredForAnalysis]
-  );
-
-  const highEngagementProspects = useMemo(
-    () => buildHighEngagementProspects(filteredForAnalysis),
-    [filteredForAnalysis]
   );
 
   const handleProcess = async () => {
@@ -475,13 +749,77 @@ function EmailAnalyticsPage() {
     }
   };
 
-  const handleLoadDemo = () => {
-    setEmailData({
-      ...demoEmailData,
-      sdrStats: demoEmailData.sdrStats || [],
-    });
-    setMode("demo");
+  const handleLoadDemo = async () => {
+    setLoading(true);
     setError("");
+    try {
+      // Load demo CSVs from public folder
+      const [sendRes, openRes, contactsRes] = await Promise.all([
+        fetch("/harshit.gupta_send.csv"),
+        fetch("/harshit.gupta_open-1.csv"),
+        fetch("/contacts.csv"),
+      ]);
+
+      if (!sendRes.ok || !openRes.ok || !contactsRes.ok) {
+        throw new Error("Failed to load demo CSV files from public folder");
+      }
+
+      const [sendCsv, openCsv, contactsCsv] = await Promise.all([
+        sendRes.text(),
+        openRes.text(),
+        contactsRes.text(),
+      ]);
+
+      // Validate headers to match upload behaviour
+      validateSendHeaders(sendCsv);
+      validateOpenHeaders(openCsv);
+      validateContactsHeaders(contactsCsv);
+
+      // Build single-SDR config for demo
+      const sdrPayload = [
+        {
+          name: "Harshit Gupta",
+          sendCsv,
+          openCsv,
+        },
+      ];
+
+      const result = await processMultiSdrPipeline(sdrPayload, contactsCsv);
+      const processedData = {
+        successful: result.successful,
+        failed: result.failed,
+        stats: result.stats,
+        sdrStats: result.sdrStats || [],
+      };
+      setEmailData(processedData);
+      setMode("demo");
+
+      // Run data validation on demo as well
+      try {
+        const validation = await runDataValidation(processedData, sdrPayload);
+        setValidationReport(validation);
+
+        if (!validation.overallPassed) {
+          console.warn(
+            "Data validation (demo) failed:",
+            formatValidationReport(validation)
+          );
+        } else {
+          console.log(
+            "Data validation (demo) passed:",
+            formatValidationReport(validation)
+          );
+        }
+      } catch (validationError) {
+        console.warn("Validation check (demo) failed:", validationError);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(e);
+      setError(e.message || "Failed to load demo data");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDownloadTemplate = (type) => {
@@ -507,6 +845,7 @@ function EmailAnalyticsPage() {
       <Container maxWidth="xl" sx={{ py: 4 }}>
         <Fade in timeout={400}>
           <Paper
+            id="section-overview"
             elevation={4}
             sx={{
               background: "linear-gradient(135deg, #1d3557 0%, #457b9d 100%)",
@@ -1251,6 +1590,7 @@ function EmailAnalyticsPage() {
               {/* Filters Section - Moved to Top */}
               <Fade in timeout={400}>
                 <Card
+                  id="section-filters"
                   elevation={3}
                   sx={{
                     background: "linear-gradient(135deg, #f1faee 0%, #a8dadc 100%)",
@@ -1569,7 +1909,7 @@ function EmailAnalyticsPage() {
 
               {/* Key Performance Indicators */}
               <Fade in timeout={600}>
-                <Box>
+                <Box id="section-kpis">
                   <Typography
                     variant="h5"
                     sx={{
@@ -1676,7 +2016,7 @@ function EmailAnalyticsPage() {
               {/* SDR Leaderboard - Top Section */}
               {sdrMatrix.length > 0 && (
                 <Grow in timeout={600}>
-                  <Box>
+                  <Box id="section-leaderboard">
                     <Stack direction="row" alignItems="center" spacing={2} mb={3}>
                       <Box
                         sx={{
@@ -1700,16 +2040,38 @@ function EmailAnalyticsPage() {
                           Top performers ranked by engagement, views, and overall activity
                         </Typography>
                       </Box>
-                      <Chip
-                        label={`${sdrMatrix.length} SDRs Total`}
-                        sx={{
-                          bgcolor: "#000000",
-                          color: "white",
-                          fontWeight: 600,
-                          fontSize: "0.875rem",
-                          px: 1,
-                        }}
-                      />
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip
+                          label={`${sdrMatrix.length} SDRs Total`}
+                          sx={{
+                            bgcolor: "#000000",
+                            color: "white",
+                            fontWeight: 600,
+                            fontSize: "0.875rem",
+                            px: 1,
+                          }}
+                        />
+                        <Tooltip
+                          title={
+                            <Box>
+                              <Typography variant="caption" sx={{ display: "block", fontWeight: 700, mb: 0.5 }}>
+                                How rankings are calculated
+                              </Typography>
+                              <Typography variant="caption" sx={{ display: "block" }}>
+                                Score = (Views × 0.4) + (Clicks × 0.3) + (High-engagement sends × 0.2) + (Engagement rate × 0.1).
+                              </Typography>
+                              <Typography variant="caption" sx={{ display: "block", mt: 0.5 }}>
+                                High-engagement send = email with Views ≥ 5. SDRs are sorted by this score (highest first).
+                              </Typography>
+                            </Box>
+                          }
+                          arrow
+                        >
+                          <IconButton size="small">
+                            <InfoOutlined sx={{ fontSize: 20, color: "text.secondary" }} />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </Stack>
 
                     {/* Top 3 Podium Cards */}
@@ -2151,6 +2513,7 @@ function EmailAnalyticsPage() {
               {/* Daily/Monthly Engagement Trend */}
               <Grow in timeout={800}>
                 <Card
+                  id="section-trends"
                   elevation={2}
                   sx={{
                     bgcolor: "#FFFFFF",
@@ -2301,6 +2664,7 @@ function EmailAnalyticsPage() {
               {/* Week-by-Week Analysis Section */}
               <Fade in timeout={1000}>
                 <Card
+                  id="section-tables"
                   elevation={2}
                   sx={{
                     bgcolor: "#FFFFFF",
@@ -2454,7 +2818,7 @@ function EmailAnalyticsPage() {
 
               {/* Company Engagement Analysis */}
               <Fade in timeout={1200}>
-                <Box>
+                <Box id="section-companies">
                   <Stack direction="row" alignItems="center" spacing={2} mb={3}>
                     <Box
                       sx={{
@@ -2501,14 +2865,37 @@ function EmailAnalyticsPage() {
                           bgcolor: "#E8EAF6",
                           p: 2,
                           borderBottom: "2px solid #6033d7",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 2,
                         }}
                       >
-                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
-                          High Engagement Companies
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                          Companies with engagement rate &gt; 200%
-                        </Typography>
+                        <Box>
+                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                            High Engagement Companies
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                            Companies with engagement rate &gt; 200%
+                          </Typography>
+                        </Box>
+                        <Stack direction="row" spacing={1}>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => setCompanyMatrixOpen(true)}
+                          >
+                            View table
+                          </Button>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            color="primary"
+                            onClick={handleExportHighEngagementCompanies}
+                          >
+                            Export
+                          </Button>
+                        </Stack>
                       </Box>
                       <Box sx={{ p: 3 }}>
                         <Stack spacing={2.5}>
@@ -2612,6 +2999,29 @@ function EmailAnalyticsPage() {
                                       }}
                                     />
                                   </Box>
+                                  <Box
+                                    sx={{
+                                      mt: 2,
+                                      display: "flex",
+                                      justifyContent: "flex-end",
+                                    }}
+                                  >
+                                    <Button
+                                      variant="outlined"
+                                      size="small"
+                                      onClick={() => {
+                                        const key = company.company
+                                          ? String(company.company).toLowerCase().trim()
+                                          : null;
+                                        if (!key) return;
+                                        setSelectedCompanyKey(key);
+                                        setSelectedCompanyLabel(company.company);
+                                        setCompanyDetailsOpen(true);
+                                      }}
+                                    >
+                                      Know more
+                                    </Button>
+                                  </Box>
                                 </Box>
                               </Stack>
                             </Paper>
@@ -2661,9 +3071,184 @@ function EmailAnalyticsPage() {
                 </Box>
               </Fade>
 
+      {/* High Engagement Companies Matrix Dialog */}
+      <Dialog
+        open={companyMatrixOpen}
+        onClose={() => setCompanyMatrixOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            maxHeight: "90vh",
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            bgcolor: "#1d3557",
+            color: "white",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            py: 2,
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            High Engagement Companies Matrix
+          </Typography>
+          <IconButton
+            onClick={() => setCompanyMatrixOpen(false)}
+            sx={{ color: "white" }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
+          <Typography
+            variant="body2"
+            sx={{ mb: 2, color: "text.secondary" }}
+          >
+            All high engagement companies (Views &gt; 2× Emails) for the current
+            filters.
+          </Typography>
+          <DataTable
+            columns={[
+              { key: "company", label: "Company" },
+              { key: "emails", label: "Emails" },
+              { key: "views", label: "Views" },
+              { key: "clicks", label: "Clicks" },
+              { key: "engagementRate", label: "Engagement Rate (%)" },
+            ]}
+            rows={companyMatrixRows}
+            emptyMessage="No high engagement companies in the current filters."
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* High Engagement Company Details Dialog */}
+      <Dialog
+        open={companyDetailsOpen}
+        onClose={() => {
+          setCompanyDetailsOpen(false);
+          setSelectedCompanyKey(null);
+          setSelectedCompanyLabel("");
+        }}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            maxHeight: "90vh",
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            bgcolor: "#1d3557",
+            color: "white",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            py: 2,
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            High Engagement Company Details
+            {selectedCompanyLabel ? ` • ${selectedCompanyLabel}` : ""}
+          </Typography>
+          <IconButton
+            onClick={() => {
+              setCompanyDetailsOpen(false);
+              setSelectedCompanyKey(null);
+              setSelectedCompanyLabel("");
+            }}
+            sx={{ color: "white" }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
+          <Typography
+            variant="body2"
+            sx={{ mb: 2, color: "text.secondary" }}
+          >
+            Individual email sends contributing to this company&apos;s
+            engagement, based on the current filters.
+          </Typography>
+          <DataTable
+            columns={[
+              { key: "sent_date", label: "Sent Date" },
+              { key: "recipient_email", label: "Recipient Email" },
+              { key: "views", label: "Views" },
+              { key: "clicks", label: "Clicks" },
+            ]}
+            rows={companyDetailRows}
+            emptyMessage="No email records for this company in the current filters."
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* High Engagement Prospects Matrix Dialog */}
+      <Dialog
+        open={prospectsMatrixOpen}
+        onClose={() => setProspectsMatrixOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            maxHeight: "90vh",
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            bgcolor: "#1d3557",
+            color: "white",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            py: 2,
+          }}
+        >
+          <Typography variant="h6" sx={{ fontWeight: 700 }}>
+            High Engagement Prospects Matrix
+          </Typography>
+          <IconButton
+            onClick={() => setProspectsMatrixOpen(false)}
+            sx={{ color: "white" }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
+          <Typography
+            variant="body2"
+            sx={{ mb: 2, color: "text.secondary" }}
+          >
+            All high engagement prospects (Views &gt; 2× Emails) for the
+            current filters.
+          </Typography>
+          <DataTable
+            columns={[
+              { key: "prospectName", label: "Prospect Name" },
+              { key: "prospectEmail", label: "Prospect Email" },
+              { key: "company", label: "Company" },
+              { key: "emails", label: "Emails" },
+              { key: "views", label: "Views" },
+              { key: "clicks", label: "Clicks" },
+              { key: "engagementRate", label: "Engagement Rate (%)" },
+            ]}
+            rows={prospectsMatrixRows}
+            emptyMessage="No high engagement prospects in the current filters."
+          />
+        </DialogContent>
+      </Dialog>
+
               {/* High Engagement Prospects */}
               <Fade in timeout={1400}>
-                <Box>
+                <Box id="section-prospects">
                   <Stack direction="row" alignItems="center" spacing={2} mb={3}>
                     <Box
                       sx={{
@@ -2679,7 +3264,7 @@ function EmailAnalyticsPage() {
                     >
                       <TrendingUp sx={{ fontSize: 32, color: "#000000" }} />
                     </Box>
-                    <Box>
+                    <Box sx={{ flexGrow: 1 }}>
                       <Typography variant="h4" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
                         ⭐ High Engagement Prospects
                       </Typography>
@@ -2689,6 +3274,23 @@ function EmailAnalyticsPage() {
                         Emails)
                       </Typography>
                     </Box>
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => setProspectsMatrixOpen(true)}
+                      >
+                        View table
+                      </Button>
+                      <Button
+                        variant="contained"
+                        size="small"
+                        color="primary"
+                        onClick={handleExportHighEngagementProspects}
+                      >
+                        Export
+                      </Button>
+                    </Stack>
                   </Stack>
 
                   {highEngagementProspects.highEngagementProspects.length > 0 ? (
@@ -2882,6 +3484,7 @@ function EmailAnalyticsPage() {
 
               <Fade in timeout={1000}>
                 <Card
+                  id="detailed-records"
                   elevation={2}
                   sx={{
                     bgcolor: "#FFFFFF",
