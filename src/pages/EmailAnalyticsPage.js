@@ -42,13 +42,11 @@ import {
   Zoom,
 } from "@mui/material";
 import {
-  EmojiEvents,
   TrendingUp,
   Visibility,
   TouchApp,
   Business,
   Email,
-  LocalFireDepartment,
   Close as CloseIcon,
   Upload as UploadIcon,
   Settings as SettingsIcon,
@@ -57,6 +55,7 @@ import {
   Error as ErrorIcon,
   Warning as WarningIcon,
   InfoOutlined,
+  Leaderboard,
 } from "@mui/icons-material";
 import { startOfWeek, startOfMonth, format, eachWeekOfInterval, eachMonthOfInterval, isWithinInterval } from "date-fns";
 import Plot from "react-plotly.js";
@@ -139,31 +138,44 @@ function EmailAnalyticsPage() {
     mode === "upload" && !!contactsFile && readySdrs && !loading;
 
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const id = entry.target.id;
-            setActiveSection(id);
-            window.dispatchEvent(
-              new CustomEvent("email-section-change", {
-                detail: { id },
-              })
-            );
-          }
-        });
-      },
-      {
-        threshold: 0.35,
-      }
-    );
+    const handleScroll = () => {
+      const sections = SECTION_NAV.map(({ id }) => {
+        const el = document.getElementById(id);
+        if (!el) return null;
+        const top = el.offsetTop;
+        return { id, top };
+      }).filter(Boolean);
 
-    SECTION_NAV.forEach((section) => {
-      const el = document.getElementById(section.id);
-      if (el) observer.observe(el);
-    });
+      if (!sections.length) return;
 
-    return () => observer.disconnect();
+      // Current scroll position plus small offset so change happens
+      // when the heading passes under the navbar area.
+      const current = window.scrollY + 140;
+
+      // Pick the last section whose top is above the current position.
+      let bestId = sections[0].id;
+      sections.forEach((sec) => {
+        if (sec.top <= current) {
+          bestId = sec.id;
+        }
+      });
+
+      setActiveSection((prev) => {
+        if (prev === bestId) return prev;
+        window.dispatchEvent(
+          new CustomEvent("email-section-change", {
+            detail: { id: bestId },
+          })
+        );
+        return bestId;
+      });
+    };
+
+    // Run once on mount
+    handleScroll();
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
 
@@ -846,32 +858,33 @@ function EmailAnalyticsPage() {
         <Fade in timeout={400}>
           <Paper
             id="section-overview"
-            elevation={4}
+            elevation={3}
             sx={{
-              background: "linear-gradient(135deg, #1d3557 0%, #457b9d 100%)",
-              border: "3px solid #1d3557",
-              p: 4,
-              mb: 4,
-              borderRadius: 4,
+              background: "linear-gradient(135deg, #1d3557 0%, #457b9d 70%, #a8dadc 100%)",
+              border: "1px solid rgba(241, 250, 238, 0.4)",
+              p: { xs: 2.5, md: 3 },
+              mb: 3,
+              borderRadius: 3,
               position: "relative",
               overflow: "hidden",
+              backdropFilter: "blur(6px)",
               "&::before": {
                 content: '""',
                 position: "absolute",
-                top: -50,
-                right: -50,
-                width: 200,
-                height: 200,
+                top: -40,
+                right: -40,
+                width: 140,
+                height: 140,
                 borderRadius: "50%",
-                bgcolor: "rgba(255, 255, 255, 0.1)",
+                bgcolor: "rgba(255, 255, 255, 0.12)",
               },
               "&::after": {
                 content: '""',
                 position: "absolute",
-                bottom: -30,
-                left: -30,
-                width: 150,
-                height: 150,
+                bottom: -40,
+                left: -40,
+                width: 120,
+                height: 120,
                 borderRadius: "50%",
                 bgcolor: "rgba(255, 255, 255, 0.08)",
               },
@@ -881,60 +894,71 @@ function EmailAnalyticsPage() {
               direction={{ xs: "column", md: "row" }}
               justifyContent="space-between"
               alignItems={{ xs: "flex-start", md: "center" }}
-              spacing={2}
+              spacing={2.5}
               sx={{ position: "relative", zIndex: 1 }}
             >
-              <Box>
-                <Typography variant="h3" gutterBottom sx={{ fontWeight: 800, color: "white", mb: 1 }}>
+              <Box sx={{ maxWidth: { xs: "100%", md: 520 } }}>
+                <Typography
+                  variant="overline"
+                  sx={{
+                    color: "rgba(241, 250, 238, 0.9)",
+                    letterSpacing: 1,
+                    fontWeight: 600,
+                  }}
+                >
+                  Email Analytics
+                </Typography>
+                <Typography
+                  variant="h4"
+                  gutterBottom
+                  sx={{ fontWeight: 800, color: "white", mb: 0.5 }}
+                >
                   📊 Email Analytics Dashboard
                 </Typography>
-                <Typography variant="h6" sx={{ color: "rgba(255, 255, 255, 0.9)", fontWeight: 400 }}>
-                  Upload SDR CSVs or load demo data to see send-open-contact performance metrics
-                </Typography>
               </Box>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
                 <Button
                   variant="contained"
-                  size="large"
+                  size="medium"
                   startIcon={<UploadIcon />}
                   onClick={() => setModalOpen(true)}
                   sx={{
                     bgcolor: "#e63946",
                     color: "white",
                     fontWeight: 700,
-                    py: 1.5,
-                    px: 4,
-                    borderRadius: 3,
-                    boxShadow: "0 4px 16px rgba(230, 57, 70, 0.3)",
+                    py: 1,
+                    px: 3,
+                    borderRadius: 999,
+                    boxShadow: "0 3px 12px rgba(230, 57, 70, 0.35)",
                     "&:hover": {
                       bgcolor: "#d62839",
-                      transform: "translateY(-2px)",
-                      boxShadow: "0 6px 20px rgba(230, 57, 70, 0.4)",
+                      transform: "translateY(-1px)",
+                      boxShadow: "0 5px 16px rgba(230, 57, 70, 0.45)",
                     },
-                    transition: "all 0.3s",
+                    transition: "all 0.25s",
                   }}
                 >
                   Upload Data
                 </Button>
                 <Button
                   variant="outlined"
-                  size="large"
+                  size="medium"
                   onClick={handleLoadDemo}
                   sx={{
-                    borderColor: "#f1faee",
-                    color: "#f1faee",
-                    fontWeight: 700,
-                    py: 1.5,
-                    px: 4,
-                    borderRadius: 3,
-                    borderWidth: 2,
+                    borderColor: "rgba(241, 250, 238, 0.85)",
+                    color: "rgba(241, 250, 238, 0.95)",
+                    fontWeight: 600,
+                    py: 1,
+                    px: 2.5,
+                    borderRadius: 999,
+                    borderWidth: 1.5,
                     "&:hover": {
-                      borderWidth: 2,
+                      borderWidth: 1.5,
                       borderColor: "#f1faee",
                       bgcolor: "rgba(241, 250, 238, 0.1)",
-                      transform: "translateY(-2px)",
+                      transform: "translateY(-1px)",
                     },
-                    transition: "all 0.3s",
+                    transition: "all 0.25s",
                   }}
                 >
                   🎯 Demo Data
@@ -2020,9 +2044,9 @@ function EmailAnalyticsPage() {
                     <Stack direction="row" alignItems="center" spacing={2} mb={3}>
                       <Box
                         sx={{
-                          width: 56,
-                          height: 56,
-                          borderRadius: 3,
+                          width: 48,
+                          height: 48,
+                          borderRadius: 2,
                           bgcolor: "#f1faee",
                           display: "flex",
                           alignItems: "center",
@@ -2030,13 +2054,13 @@ function EmailAnalyticsPage() {
                           border: "2px solid #e63946",
                         }}
                       >
-                        <EmojiEvents sx={{ fontSize: 32, color: "#e63946" }} />
+                        <Leaderboard sx={{ fontSize: 26, color: "#e63946" }} />
                       </Box>
                       <Box sx={{ flexGrow: 1 }}>
-                        <Typography variant="h4" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
-                          🏆 SDR Leaderboard
+                        <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
+                          SDR Leaderboard
                         </Typography>
-                        <Typography variant="body1" sx={{ color: "text.secondary" }}>
+                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
                           Top performers ranked by engagement, views, and overall activity
                         </Typography>
                       </Box>
@@ -2822,9 +2846,9 @@ function EmailAnalyticsPage() {
                   <Stack direction="row" alignItems="center" spacing={2} mb={3}>
                     <Box
                       sx={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: 3,
+                        width: 48,
+                        height: 48,
+                        borderRadius: 2,
                         bgcolor: "#E8EAF6",
                         display: "flex",
                         alignItems: "center",
@@ -2832,14 +2856,14 @@ function EmailAnalyticsPage() {
                         border: "2px solid #6033d7",
                       }}
                     >
-                      <LocalFireDepartment sx={{ fontSize: 32, color: "#6033d7" }} />
+                      <Business sx={{ fontSize: 26, color: "#6033d7" }} />
                     </Box>
                     <Box>
-                      <Typography variant="h4" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
-                        🔥 Company Engagement Analysis
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
+                        Company Engagement Analysis
                       </Typography>
-                      <Typography variant="body1" sx={{ color: "text.secondary", lineHeight: 1.6 }}>
-                        📊 <strong>{companyEngagement.totalCompanies.toLocaleString()}</strong> companies analyzed •{" "}
+                      <Typography variant="body2" sx={{ color: "text.secondary", lineHeight: 1.6 }}>
+                        <strong>{companyEngagement.totalCompanies.toLocaleString()}</strong> companies analyzed •{" "}
                         <strong>{companyEngagement.highEngagementCount.toLocaleString()}</strong> high engagement accounts (Views &gt; 2×
                         Emails)
                       </Typography>
@@ -2897,14 +2921,14 @@ function EmailAnalyticsPage() {
                           </Button>
                         </Stack>
                       </Box>
-                      <Box sx={{ p: 3 }}>
-                        <Stack spacing={2.5}>
+                      <Box sx={{ p: 2.25 }}>
+                        <Stack spacing={1.75}>
                           {companyEngagement.highEngagementCompanies.map((company, idx) => (
                             <Paper
                               key={company.company}
                               elevation={0}
                               sx={{
-                                p: 3,
+                                p: 2,
                                 bgcolor: idx % 2 === 0 ? "#F5F5F5" : "#FFFFFF",
                                 borderRadius: 2,
                                 border: "1px solid #E0E0E0",
@@ -2918,11 +2942,11 @@ function EmailAnalyticsPage() {
                                 },
                               }}
                             >
-                              <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "flex-start", sm: "center" }} spacing={2}>
+                              <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "flex-start", sm: "center" }} spacing={1.75}>
                                 <Box
                                   sx={{
-                                    width: 48,
-                                    height: 48,
+                                    width: 40,
+                                    height: 40,
                                     borderRadius: 2,
                                     bgcolor: "#E8EAF6",
                                     display: "flex",
@@ -2932,15 +2956,15 @@ function EmailAnalyticsPage() {
                                     flexShrink: 0,
                                   }}
                                 >
-                                  <LocalFireDepartment sx={{ fontSize: 28, color: "#6033d7" }} />
+                                  <Business sx={{ fontSize: 22, color: "#6033d7" }} />
                                 </Box>
                                 <Box sx={{ flexGrow: 1 }}>
-                                  <Stack direction="row" alignItems="center" spacing={1} mb={1}>
+                                  <Stack direction="row" alignItems="center" spacing={1} mb={0.75}>
                                     <Typography
                                       variant="h6"
                                       sx={{
                                         fontWeight: 700,
-                                        fontSize: "1.15rem",
+                                        fontSize: "1.05rem",
                                         color: "#000000",
                                       }}
                                     >
@@ -2974,15 +2998,15 @@ function EmailAnalyticsPage() {
                                     sx={{
                                       color: "text.primary",
                                       fontWeight: 500,
-                                      fontSize: "0.95rem",
-                                      lineHeight: 1.8,
+                                      fontSize: "0.9rem",
+                                      lineHeight: 1.5,
                                     }}
                                   >
                                     📧 <strong>{company.emails}</strong> {company.emails === 1 ? "email" : "emails"} │ 👁️{" "}
                                     <strong>{company.views.toFixed(1)}</strong> views │ 🖱️ <strong>{company.clicks.toFixed(1)}</strong>{" "}
                                     clicks │ 📊 <strong>{company.engagementRate.toFixed(1)}%</strong> rate
                                   </Typography>
-                                  <Box sx={{ mt: 1.5 }}>
+                                  <Box sx={{ mt: 1 }}>
                                     <LinearProgress
                                       variant="determinate"
                                       value={Math.min((company.engagementRate / 20) * 100, 100)}
@@ -3057,7 +3081,7 @@ function EmailAnalyticsPage() {
                             mb: 2,
                           }}
                         >
-                          <LocalFireDepartment sx={{ fontSize: 48, color: "#BDBDBD" }} />
+                          <Business sx={{ fontSize: 48, color: "#BDBDBD" }} />
                         </Box>
                         <Typography variant="h6" sx={{ color: "#000000", mb: 1, fontWeight: 600 }}>
                           No High Engagement Companies Found
@@ -3548,7 +3572,20 @@ function EmailAnalyticsPage() {
                                 height: 24,
                               }}
                             />
-                                                <Button variant="contained" color="primary" onClick={handleDownloadSuccessfulContacts}>Export CSV</Button>
+                            <Button
+                              component="span"
+                              variant="contained"
+                              color="primary"
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleDownloadSuccessfulContacts();
+                              }}
+                              sx={{ ml: 1 }}
+                            >
+                              Export CSV
+                            </Button>
                           </Stack>
                         }
                       />
@@ -3566,7 +3603,20 @@ function EmailAnalyticsPage() {
                                 height: 24,
                               }}
                             />
-                               <Button variant="contained" color="error" onClick={handleDownloadFailedContacts}>Export CSV</Button>
+                            <Button
+                              component="span"
+                              variant="contained"
+                              color="error"
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                handleDownloadFailedContacts();
+                              }}
+                              sx={{ ml: 1 }}
+                            >
+                              Export CSV
+                            </Button>
                           </Stack>
                         }
                       />
