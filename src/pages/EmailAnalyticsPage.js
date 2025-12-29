@@ -317,6 +317,9 @@ function EmailAnalyticsPage() {
         openedProspects: 0,
         prospectOpenedRate: 0,
         openRate: 0,
+        trackedOpenRate: 0,
+        trackingCoverage: 0,
+        emailsWithTracking: 0,
         contactMatch: 0,
         accountsOwned: 0,
         highEngagement: 0,
@@ -347,6 +350,21 @@ function EmailAnalyticsPage() {
     // Stage 1: Open Rate = (records with non-NULL Views / total_sends) * 100
     const openRate = totalSends > 0
       ? (recordsWithOpens.length / totalSends) * 100
+      : 0;
+    
+    // NEW: Count emails with tracking data (Views field exists, not null/undefined)
+    const emailsWithTracking = send_open_df.filter((r) => 
+      r.Views !== null && r.Views !== undefined
+    ).length;
+    
+    // NEW: Tracked Open Rate - only considers emails with tracking data
+    const trackedOpenRate = emailsWithTracking > 0
+      ? (recordsWithOpens.length / emailsWithTracking) * 100
+      : 0;
+    
+    // NEW: Tracking Coverage - % of emails that have tracking data
+    const trackingCoverage = totalSends > 0
+      ? (emailsWithTracking / totalSends) * 100
       : 0;
     
     // Stage 2: Opened Prospect Count - unique prospects with non-null Views
@@ -413,6 +431,9 @@ function EmailAnalyticsPage() {
       openedProspects,
       prospectOpenedRate,
       openRate,
+      trackedOpenRate,      // NEW: Realistic open rate (tracked emails only)
+      trackingCoverage,     // NEW: % of emails with tracking data
+      emailsWithTracking,   // NEW: Count of emails with tracking
       contactMatch,
       accountsOwned,
       highEngagement,

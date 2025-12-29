@@ -333,17 +333,14 @@ function parseDateFlexible(value) {
   if (!value) return null;
   const s = String(value).trim();
 
-  // Try native Date first (handles "Jul 3, 2025, 02:14:21" format)
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d;
-
-  // Try DD/MM/YYYY HH:MM:SS
-  const m = s.match(
+  // Try DD/MM/YYYY HH:MM:SS FIRST (Send CSV format)
+  // Must try this before native Date() to avoid MM/DD/YYYY ambiguity
+  const ddmmyyyy = s.match(
     /^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T](\d{2}):(\d{2}):(\d{2})$/
   );
-  if (m) {
-    const [, dd, mm, yyyy, HH, MM, SS] = m;
-    const d2 = new Date(
+  if (ddmmyyyy) {
+    const [, dd, mm, yyyy, HH, MM, SS] = ddmmyyyy;
+    const d = new Date(
       Number(yyyy),
       Number(mm) - 1,
       Number(dd),
@@ -351,8 +348,29 @@ function parseDateFlexible(value) {
       Number(MM),
       Number(SS)
     );
-    if (!isNaN(d2.getTime())) return d2;
+    if (!isNaN(d.getTime())) return d;
   }
+
+  // Try YYYY-MM-DD HH:MM:SS (Opens CSV format - MailSuite)
+  const yyyymmdd = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/
+  );
+  if (yyyymmdd) {
+    const [, yyyy, mm, dd, HH, MM, SS] = yyyymmdd;
+    const d = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      Number(HH),
+      Number(MM),
+      Number(SS)
+    );
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Finally try native Date (handles "Jul 3, 2025, 02:14:21" and other formats)
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d;
 
   return null;
 }
@@ -409,61 +427,62 @@ function phase1Matching(sendRows, openRows) {
   const failed = [];
   const usedIndices = new Set();
 
-  // Build email-based lookup
+  // Build email-based lookup - extract email from recipient_name
   const openByEmail = new Map();
   openRows.forEach((open, idx) => {
-    const email = (open.recipient_name || "").toLowerCase().trim();
-    if (!openByEmail.has(email)) {
+    // Extract email from recipient_name (handles formats like "user@domain.com" or "Name <user@domain.com>")
+    const recipientStr = (open.recipient_name || "").toLowerCase().trim();
+    const emailMatch = recipientStr.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/);
+    const email = emailMatch ? emailMatch[1] : recipientStr;
+    
+    if (email && !openByEmail.has(email)) {
       openByEmail.set(email, []);
     }
-    openByEmail.get(email).push({ ...open, _index: idx });
+    if (email) {
+      openByEmail.get(email).push({ ...open, _index: idx });
+    }
   });
 
   sendRows.forEach((send) => {
-    const email = (send.recipient_name || "").toLowerCase().trim();
-    const sendTime = send.sent_date_parsed;
-    if (!sendTime) {
-      failed.push({ ...send, failure_reason: "invalid_send_date" });
-      return;
-    }
-
+    // Use 'Recipient Email' field for matching (more reliable than recipient_name)
+    const email = (send["Recipient Email"] || send.recipient_email || send.recipient_name || "").toLowerCase().trim();
+    
+    // Get all opens for this email
     const emailOpens = openByEmail.get(email) || [];
-    let matchFound = false;
-
-    // Try increments 0-11 seconds
-    for (let increment = 0; increment < 12; increment++) {
-      const searchTime = new Date(sendTime.getTime() + increment * 1000);
-      const matches = emailOpens.filter((open) => {
-        if (!open.sent_date_parsed) return false;
-        const openTime = open.sent_date_parsed.getTime();
-        const searchTimeMs = searchTime.getTime();
-        return openTime === searchTimeMs;
+    
+    if (emailOpens.length === 0) {
+      // No opens found for this email
+      failed.push({ ...send, failure_reason: "no_opens_for_email" });
+    } else if (emailOpens.length === 1) {
+      // Single match - use it
+      const matched = emailOpens[0];
+      usedIndices.add(matched._index);
+      successful.push({
+        ...send,
+        Views: matched.Views || 0,
+        Clicks: matched.Clicks || 0,
+        last_opened: matched.last_opened || matched.sent_date,
       });
-
-      if (matches.length === 1) {
-        const matched = matches[0];
-        usedIndices.add(matched._index);
+    } else {
+      // Multiple opens for same email - take the most recent one
+      const mostRecent = emailOpens.reduce((latest, current) => {
+        if (!latest) return current;
+        const latestDate = latest.sent_date_parsed || new Date(0);
+        const currentDate = current.sent_date_parsed || new Date(0);
+        return currentDate > latestDate ? current : latest;
+      }, null);
+      
+      if (mostRecent) {
+        usedIndices.add(mostRecent._index);
         successful.push({
           ...send,
-          Views: matched.Views || 0,
-          Clicks: matched.Clicks || 0,
-          last_opened: matched.last_opened || matched.sent_date,
+          Views: mostRecent.Views || 0,
+          Clicks: mostRecent.Clicks || 0,
+          last_opened: mostRecent.last_opened || mostRecent.sent_date,
         });
-        matchFound = true;
-        break;
-      } else if (matches.length > 1) {
-        failed.push({
-          ...send,
-          failure_reason: `multiple_matches_at_plus_${increment}_seconds`,
-          match_count: matches.length,
-        });
-        matchFound = true;
-        break;
+      } else {
+        failed.push({ ...send, failure_reason: "multiple_matches_but_no_valid_date" });
       }
-    }
-
-    if (!matchFound) {
-      failed.push({ ...send, failure_reason: "no_match_within_11_seconds" });
     }
   });
 
@@ -482,58 +501,51 @@ function phase2Matching(failedRecords, openRows, usedIndices) {
     .map((open, idx) => ({ ...open, _index: idx }))
     .filter((open) => !usedIndices.has(open._index));
 
-  // Build email-based lookup for unused opens
+  // Build email-based lookup for unused opens - extract email from recipient_name
   const unusedByEmail = new Map();
   unusedOpens.forEach((open) => {
-    const email = (open.recipient_name || "").toLowerCase().trim();
-    if (!unusedByEmail.has(email)) {
+    // Extract email from recipient_name
+    const recipientStr = (open.recipient_name || "").toLowerCase().trim();
+    const emailMatch = recipientStr.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/);
+    const email = emailMatch ? emailMatch[1] : recipientStr;
+    
+    if (email && !unusedByEmail.has(email)) {
       unusedByEmail.set(email, []);
     }
-    unusedByEmail.get(email).push(open);
+    if (email) {
+      unusedByEmail.get(email).push(open);
+    }
   });
 
   failedRecords.forEach((failed) => {
-    const email = (failed.recipient_name || "").toLowerCase().trim();
-    const sendTime = failed.sent_date_parsed;
-    if (!sendTime) {
-      finalFailed.push({ ...failed, failure_reason: "invalid_send_date" });
-      return;
-    }
-
+    // Use 'Recipient Email' field for matching (more reliable than recipient_name)
+    const email = (failed["Recipient Email"] || failed.recipient_email || failed.recipient_name || "").toLowerCase().trim();
+    
+    // Get unused opens for this email
     const emailOpens = unusedByEmail.get(email) || [];
-    let matchFound = false;
-
-    // Try increments 12-60 seconds
-    for (let increment = 12; increment <= 60; increment++) {
-      const searchTime = new Date(sendTime.getTime() + increment * 1000);
-      const matches = emailOpens.filter((open) => {
-        if (!open.sent_date_parsed) return false;
-        return open.sent_date_parsed.getTime() === searchTime.getTime();
-      });
-
-      if (matches.length === 1) {
-        const matched = matches[0];
+    
+    if (emailOpens.length > 0) {
+      // Take the most recent unused open
+      const mostRecent = emailOpens.reduce((latest, current) => {
+        if (!latest) return current;
+        const latestDate = latest.sent_date_parsed || new Date(0);
+        const currentDate = current.sent_date_parsed || new Date(0);
+        return currentDate > latestDate ? current : latest;
+      }, null);
+      
+      if (mostRecent) {
         successful.push({
           ...failed,
-          Views: matched.Views || 0,
-          Clicks: matched.Clicks || 0,
-          last_opened: matched.last_opened || matched.sent_date,
+          Views: mostRecent.Views || 0,
+          Clicks: mostRecent.Clicks || 0,
+          last_opened: mostRecent.last_opened || mostRecent.sent_date,
         });
-        matchFound = true;
-        break;
-      } else if (matches.length > 1) {
-        finalFailed.push({
-          ...failed,
-          failure_reason: `multiple_matches_at_plus_${increment}_seconds_phase2`,
-          match_count: matches.length,
-        });
-        matchFound = true;
-        break;
+      } else {
+        finalFailed.push({ ...failed, failure_reason: "no_valid_unused_open" });
       }
-    }
-
-    if (!matchFound) {
-      finalFailed.push({ ...failed, failure_reason: "no_match_within_60_seconds" });
+    } else {
+      // No unused opens for this email
+      finalFailed.push({ ...failed, failure_reason: "no_unused_opens_for_email" });
     }
   });
 
