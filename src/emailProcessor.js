@@ -248,6 +248,11 @@ function normalizeOpen(rows) {
   return rows.map((row) => {
     const out = { ...row };
 
+    // PRESERVE original Recipient field for email extraction during matching
+    if (row["Recipient"]) {
+      out["_original_recipient"] = row["Recipient"];
+    }
+
     // Map "Recipient" -> recipient_name
     if (row["Recipient"] && !row["recipient_name"]) {
       out["recipient_name"] = row["Recipient"];
@@ -427,18 +432,22 @@ function phase1Matching(sendRows, openRows) {
   const failed = [];
   const usedIndices = new Set();
 
-  // Build email-based lookup - extract email from recipient_name
+  // Build email-based lookup - extract ALL emails from FULL Recipient string (before comma-split)
   const openByEmail = new Map();
   openRows.forEach((open, idx) => {
-    // Extract email from recipient_name (handles formats like "user@domain.com" or "Name <user@domain.com>")
-    const recipientStr = (open.recipient_name || "").toLowerCase().trim();
-    const emailMatch = recipientStr.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/);
-    const email = emailMatch ? emailMatch[1] : recipientStr;
+    // Use PRESERVED original Recipient field (before comma-split) to extract ALL emails
+    // This handles cases like "Name1,Name2,email@domain.com" where email is in 2nd/3rd position
+    const originalRecipient = open._original_recipient || open.Recipient || open.recipient_name || "";
     
-    if (email && !openByEmail.has(email)) {
-      openByEmail.set(email, []);
-    }
-    if (email) {
+    // Extract ALL emails from the full string
+    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+    const emails = [...originalRecipient.matchAll(emailRegex)].map(m => m[1].toLowerCase());
+    
+    // Add this Opens record to all extracted emails
+    for (const email of emails) {
+      if (!openByEmail.has(email)) {
+        openByEmail.set(email, []);
+      }
       openByEmail.get(email).push({ ...open, _index: idx });
     }
   });
@@ -501,18 +510,21 @@ function phase2Matching(failedRecords, openRows, usedIndices) {
     .map((open, idx) => ({ ...open, _index: idx }))
     .filter((open) => !usedIndices.has(open._index));
 
-  // Build email-based lookup for unused opens - extract email from recipient_name
+  // Build email-based lookup for unused opens - extract ALL emails from FULL Recipient string
   const unusedByEmail = new Map();
   unusedOpens.forEach((open) => {
-    // Extract email from recipient_name
-    const recipientStr = (open.recipient_name || "").toLowerCase().trim();
-    const emailMatch = recipientStr.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/);
-    const email = emailMatch ? emailMatch[1] : recipientStr;
+    // Use PRESERVED original Recipient field to extract ALL emails
+    const originalRecipient = open._original_recipient || open.Recipient || open.recipient_name || "";
     
-    if (email && !unusedByEmail.has(email)) {
-      unusedByEmail.set(email, []);
-    }
-    if (email) {
+    // Extract ALL emails from the full string
+    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+    const emails = [...originalRecipient.matchAll(emailRegex)].map(m => m[1].toLowerCase());
+    
+    // Add this Opens record to all extracted emails
+    for (const email of emails) {
+      if (!unusedByEmail.has(email)) {
+        unusedByEmail.set(email, []);
+      }
       unusedByEmail.get(email).push(open);
     }
   });

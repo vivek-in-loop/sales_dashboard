@@ -21,3 +21,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# private data files (sensitive CSV files)
+/data/uploads/
+/data/outputs/

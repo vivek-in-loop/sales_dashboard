@@ -115,6 +115,7 @@ function EmailAnalyticsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [pipelineReportOpen, setPipelineReportOpen] = useState(false);
   const [filters, setFilters] = useState({
     search: "",
     metric: "Views",
@@ -341,10 +342,11 @@ function EmailAnalyticsPage() {
         .filter(Boolean)
     ).size;
     
-    // Stage 2: Records with actual opens (non-null, non-empty Views)
+    // Stage 2: Records with tracking data (non-null Views, including 0)
+    // This matches Python's logic: counts emails with tracking data, not just opened emails
     const recordsWithOpens = send_open_df.filter((r) => {
       const views = r.Views;
-      return views != null && views !== '' && Number(views) > 0;
+      return views != null && views !== '';
     });
     
     // Stage 1: Open Rate = (records with non-NULL Views / total_sends) * 100
@@ -1329,6 +1331,263 @@ function EmailAnalyticsPage() {
           </DialogActions>
         </Dialog>
 
+        {/* Pipeline Stats Report Dialog */}
+        <Dialog
+          open={pipelineReportOpen}
+          onClose={() => setPipelineReportOpen(false)}
+          maxWidth="lg"
+          fullWidth
+          PaperProps={{
+            sx: {
+              borderRadius: 3,
+              maxHeight: "90vh",
+            },
+          }}
+        >
+          <DialogTitle
+            sx={{
+              bgcolor: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              py: 2,
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <Leaderboard sx={{ fontSize: 32 }} />
+              <Box>
+                <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                  Detailed Pipeline Report
+                </Typography>
+                <Typography variant="caption" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
+                  Complete data processing statistics from Send → Opens → Contacts
+                </Typography>
+              </Box>
+            </Box>
+            <IconButton onClick={() => setPipelineReportOpen(false)} sx={{ color: "white" }}>
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent sx={{ p: 3, bgcolor: "#f8f9fa" }}>
+            {/* Pipeline Statistics Content */}
+            <Box>
+              {/* Stage 1: Send CSV Stats */}
+              <Card sx={{ mb: 3, bgcolor: "white", boxShadow: 2 }}>
+                <CardContent>
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2, color: "#667eea", display: "flex", alignItems: "center", gap: 1 }}>
+                    <Email /> Stage 1: Send CSV Processing
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Total Send Records
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                        {emailData.stats?.total_send_records?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        After Loopwork Filter
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                        {filteredSendOpen?.length?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Unique Emails
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                        {derivedMetrics.totalProspects?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Filter Rate
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {emailData.stats?.total_send_records 
+                          ? `${((filteredSendOpen?.length / emailData.stats.total_send_records) * 100).toFixed(1)}%`
+                          : "N/A"}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              {/* Stage 2: Send-Open Join Stats */}
+              <Card sx={{ mb: 3, bgcolor: "white", boxShadow: 2 }}>
+                <CardContent>
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2, color: "#667eea", display: "flex", alignItems: "center", gap: 1 }}>
+                    <Visibility /> Stage 2: Send-Open Join (MailSuite)
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Total Opens Records
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                        {emailData.stats?.total_open_records?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Opens with Emails
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {emailData.stats?.opens_with_emails?.toLocaleString() || "N/A"}
+                        {emailData.stats?.opens_with_emails && emailData.stats?.total_open_records
+                          ? ` (${((emailData.stats.opens_with_emails / emailData.stats.total_open_records) * 100).toFixed(1)}%)`
+                          : ""}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Opens with Names Only
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#ff9800" }}>
+                        {emailData.stats?.opens_without_emails?.toLocaleString() || "N/A"}
+                        {emailData.stats?.opens_without_emails && emailData.stats?.total_open_records
+                          ? ` (${((emailData.stats.opens_without_emails / emailData.stats.total_open_records) * 100).toFixed(1)}%)`
+                          : ""}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Send Records Matched
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {emailData.stats?.send_open_success?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        With Views != NULL
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {(filteredSendOpen?.filter(r => r.Views != null && r.Views !== '').length || 0).toLocaleString()}
+                        {filteredSendOpen?.length
+                          ? ` (${((filteredSendOpen.filter(r => r.Views != null && r.Views !== '').length / filteredSendOpen.length) * 100).toFixed(1)}%)`
+                          : ""}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Match Success Rate
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {emailData.stats?.send_open_success && filteredSendOpen?.length
+                          ? `${((emailData.stats.send_open_success / filteredSendOpen.length) * 100).toFixed(1)}%`
+                          : "N/A"}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                  
+                  {/* Data Quality Warning */}
+                  {emailData.stats?.opens_without_emails && emailData.stats?.total_open_records &&
+                   (emailData.stats.opens_without_emails / emailData.stats.total_open_records) > 0.5 && (
+                    <Alert severity="warning" sx={{ mt: 2 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        ⚠️ Data Quality Issue: {((emailData.stats.opens_without_emails / emailData.stats.total_open_records) * 100).toFixed(1)}% of Opens records have names only (no emails)
+                      </Typography>
+                      <Typography variant="caption">
+                        Re-export Opens from MailSuite with "Include email addresses" enabled to improve open rate accuracy.
+                      </Typography>
+                    </Alert>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Stage 3: Contacts Join Stats */}
+              <Card sx={{ mb: 3, bgcolor: "white", boxShadow: 2 }}>
+                <CardContent>
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2, color: "#667eea", display: "flex", alignItems: "center", gap: 1 }}>
+                    <Business /> Stage 3: Contacts Join
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Total Contacts
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                        {emailData.stats?.total_contact_records?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Successful Matches
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {emailData.stats?.contact_join_success?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Failed Matches
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#f44336" }}>
+                        {emailData.stats?.contact_join_failures?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Contact Match Rate
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
+                        {derivedMetrics.contactMatch ? `${formatPercent(derivedMetrics.contactMatch)}` : "N/A"}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              {/* Overall Pipeline Summary */}
+              <Card sx={{ bgcolor: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "white", boxShadow: 3 }}>
+                <CardContent>
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2, display: "flex", alignItems: "center", gap: 1 }}>
+                    <TrendingUp /> Overall Pipeline Efficiency
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
+                        Input Records
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                        {emailData.stats?.total_send_records?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
+                        Final Output Records
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                        {filteredForAnalysis?.length?.toLocaleString() || "N/A"}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6} md={4}>
+                      <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
+                        Overall Success Rate
+                      </Typography>
+                      <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                        {emailData.stats?.total_send_records && filteredForAnalysis?.length
+                          ? `${((filteredForAnalysis.length / emailData.stats.total_send_records) * 100).toFixed(1)}%`
+                          : "N/A"}
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 2, bgcolor: "#f8f9fa" }}>
+            <Button onClick={() => setPipelineReportOpen(false)} variant="contained">
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         {/* Upload Data Modal */}
         <Dialog
           open={modalOpen}
@@ -1955,19 +2214,28 @@ function EmailAnalyticsPage() {
               {/* Key Performance Indicators */}
               <Fade in timeout={600}>
                 <Box id="section-kpis">
-                  <Typography
-                    variant="h5"
-                    sx={{
-                      fontWeight: 700,
-                      color: "#000000",
-                      mb: 3,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                    }}
-                  >
-                    📊 Key Performance Indicators
-                  </Typography>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+                    <Typography
+                      variant="h5"
+                      sx={{
+                        fontWeight: 700,
+                        color: "#000000",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                      }}
+                    >
+                      📊 Key Performance Indicators
+                    </Typography>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => setPipelineReportOpen(true)}
+                      sx={{ textTransform: "none" }}
+                    >
+                      📊 Detailed Pipeline Report
+                    </Button>
+                  </Box>
                   <Grid container spacing={2.5}>
                       {[
                         { 
