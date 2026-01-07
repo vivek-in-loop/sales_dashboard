@@ -1426,10 +1426,10 @@ function EmailAnalyticsPage() {
               <Leaderboard sx={{ fontSize: 32 }} />
               <Box>
                 <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                  Detailed Pipeline Report
+                  Pipeline Report
                 </Typography>
                 <Typography variant="caption" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
-                  Complete data processing statistics from Send → Opens → Contacts
+                  Send → Opens → Contacts Processing Statistics
                 </Typography>
               </Box>
             </Box>
@@ -1441,45 +1441,33 @@ function EmailAnalyticsPage() {
             {/* Pipeline Statistics Content */}
             <Box>
               {/* Matching Algorithm Info */}
-              <Card sx={{ mb: 3, bgcolor: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "white", boxShadow: 2 }}>
+              <Card sx={{ mb: 3, bgcolor: "white", boxShadow: 2, border: "1px solid #e0e0e0" }}>
                 <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 1, display: "flex", alignItems: "center", gap: 1 }}>
-                    <SettingsIcon /> Matching Algorithm Used
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5, color: "#667eea", display: "flex", alignItems: "center", gap: 1 }}>
+                    <SettingsIcon /> Matching Algorithm
                   </Typography>
-                  <Typography variant="body1" sx={{ mb: 1 }}>
-                    {matchingMode === 'email_only' && '📧 Email Only (Fast, Highest Match Rate)'}
-                    {matchingMode === 'timestamp' && '⏱️ Email + Timestamp (0-60s, Most Precise)'}
-                    {matchingMode === 'hybrid' && '🔄 Hybrid (Timestamp First, Then Email)'}
+                  <Chip 
+                    label={
+                      matchingMode === 'email_only' ? '📧 Email Only' :
+                      matchingMode === 'timestamp' ? '⏱️ Timestamp' :
+                      matchingMode === 'hybrid' ? '🔄 Hybrid' :
+                      matchingMode === 'relaxed' ? '🤝 Relaxed' :
+                      matchingMode === 'name_timestamp' ? '🧭 Name + Timestamp' :
+                      matchingMode === 'composite' ? '🎯 Composite' :
+                      matchingMode
+                    }
+                    color="primary"
+                    variant="outlined"
+                    sx={{ fontWeight: 600, mb: 1 }}
+                  />
+                  <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
+                    {matchingMode === 'email_only' && 'Matches by email address only for highest match rate.'}
+                    {matchingMode === 'timestamp' && 'Matches by email address and timestamp (0-60 seconds) for precision.'}
+                    {matchingMode === 'hybrid' && 'First attempts timestamp matching, then falls back to email-only.'}
+                    {matchingMode === 'relaxed' && 'Timestamp matching with wider time windows and email fallback.'}
+                    {matchingMode === 'name_timestamp' && 'Matches by name and timestamp for name-only opens.'}
+                    {matchingMode === 'composite' && 'Multi-strategy cascade using 10 different matching approaches for maximum coverage.'}
                   </Typography>
-                  <Typography variant="body2" sx={{ opacity: 0.9, mb: 2 }}>
-                    {matchingMode === 'email_only' && 'Matches Send and Open records by email address only. This provides the highest match rate and is fastest.'}
-                    {matchingMode === 'timestamp' && 'Matches Send and Open records by email address AND timestamp (0-60 seconds). This is the most precise but may have lower match rate due to timestamp discrepancies.'}
-                    {matchingMode === 'hybrid' && 'First attempts timestamp matching (0-60s), then falls back to email-only matching for failures. Best of both worlds: precision where possible, coverage where needed.'}
-                  </Typography>
-                  
-                  {/* Algorithm Comparison */}
-                  <Box sx={{ mt: 2, pt: 2, borderTop: "1px solid rgba(255,255,255,0.3)" }}>
-                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 600 }}>
-                      💡 Want to compare algorithms?
-                    </Typography>
-                    <Typography variant="caption" sx={{ opacity: 0.9, display: "block", mb: 1 }}>
-                      Switch the algorithm using the dropdown on the main screen and reload your data to see how different matching strategies affect your results:
-                    </Typography>
-                    <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mt: 1 }}>
-                      <Box>
-                        <Typography variant="caption" sx={{ fontWeight: 600 }}>📧 Email Only:</Typography>
-                        <Typography variant="caption" sx={{ display: "block", opacity: 0.9 }}>Highest match rate (80-90%+)</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" sx={{ fontWeight: 600 }}>⏱️ Timestamp:</Typography>
-                        <Typography variant="caption" sx={{ display: "block", opacity: 0.9 }}>Most precise (40-60%)</Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" sx={{ fontWeight: 600 }}>🔄 Hybrid:</Typography>
-                        <Typography variant="caption" sx={{ display: "block", opacity: 0.9 }}>Balanced (70-85%)</Typography>
-                      </Box>
-                    </Box>
-                  </Box>
                 </CardContent>
               </Card>
 
@@ -1557,7 +1545,7 @@ function EmailAnalyticsPage() {
                           {emailData.stats?.opens_data_match_rate?.toFixed(1) || "N/A"}%
                         </Typography>
                         <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                          {emailData.stats?.opens_with_tracking_data?.toLocaleString() || 0} sends have Opens data (Views != NULL)
+                          {emailData.stats?.opens_with_tracking_data?.toLocaleString() || 0} sends matched with opens that have tracking data (Views != NULL)
                         </Typography>
                       </Grid>
                       <Grid item xs={12} md={4}>
@@ -1650,6 +1638,147 @@ function EmailAnalyticsPage() {
                       </Typography>
                     </Alert>
                   )}
+
+                  {/* Matching Strategy Summary Table */}
+                  {emailData.stats?.strategy_matches && (
+                    <Box sx={{ mt: 3 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 700, mb: 2, color: "#667eea", display: "flex", alignItems: "center", gap: 1 }}>
+                        <Leaderboard /> Matching Strategy Breakdown
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
+                        Summary of records matched by each strategy in composite mode.
+                      </Typography>
+                      <TableContainer component={Paper} variant="outlined">
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow sx={{ bgcolor: "#f5f5f5" }}>
+                              <TableCell sx={{ fontWeight: 700 }}>Step</TableCell>
+                              <TableCell sx={{ fontWeight: 700 }}>Strategy</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700 }}>Records Matched</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700 }}>Confidence</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700 }}>% of Total</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {[
+                              { key: 'email', label: 'Email Match', confidence: '0.95', step: 1 },
+                              { key: 'name_subject', label: 'Name + Subject', confidence: '0.8', step: 2 },
+                              { key: 'subject_only', label: 'Subject Only', confidence: '0.5', step: 3 },
+                              { key: 'name_only', label: 'Name Only', confidence: '0.4', step: 4 },
+                              { key: 'fuzzy_subject', label: 'Fuzzy Subject', confidence: '0.3', step: 5 },
+                              { key: 'domain_name', label: 'Domain + Name', confidence: '0.25', step: 6 },
+                              { key: 'date_range', label: 'Date Range', confidence: '0.2', step: 7 },
+                              { key: 'thread_id', label: 'Thread ID', confidence: '0.9', step: 8 },
+                              { key: 'fuzzy_name', label: 'Fuzzy Name', confidence: '0.3', step: 9 },
+                              { key: 'date_proximity', label: 'Date Proximity', confidence: '0.15', step: 10 },
+                            ].map((strategy) => {
+                              const count = emailData.stats.strategy_matches[strategy.key] || 0;
+                              const total = emailData.stats.total_send_records || 1;
+                              const percentage = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
+                              const cumulative = [
+                                'email', 'name_subject', 'subject_only', 'name_only', 
+                                'fuzzy_subject', 'domain_name', 'date_range', 
+                                'thread_id', 'fuzzy_name', 'date_proximity'
+                              ].slice(0, strategy.step).reduce((sum, k) => sum + (emailData.stats.strategy_matches[k] || 0), 0);
+                              const cumulativePct = total > 0 ? ((cumulative / total) * 100).toFixed(1) : '0.0';
+                              
+                              return (
+                                <TableRow key={strategy.key} hover>
+                                  <TableCell>{strategy.step}</TableCell>
+                                  <TableCell>
+                                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                      {strategy.label}
+                                      {count > 0 && (
+                                        <Chip 
+                                          label={`${cumulativePct}%`} 
+                                          size="small" 
+                                          color={strategy.step <= 3 ? "success" : strategy.step <= 6 ? "warning" : "default"}
+                                          variant="outlined"
+                                        />
+                                      )}
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Typography sx={{ fontWeight: count > 0 ? 600 : 400, color: count > 0 ? "#4CAF50" : "text.secondary" }}>
+                                      {count.toLocaleString()}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="right">{strategy.confidence}</TableCell>
+                                  <TableCell align="right">{percentage}%</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                            <TableRow sx={{ bgcolor: "#f9f9f9", borderTop: "2px solid #ddd" }}>
+                              <TableCell colSpan={2} sx={{ fontWeight: 700 }}>Total Matched</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                {emailData.stats.send_open_success?.toLocaleString() || 0}
+                              </TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700 }}>-</TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                {emailData.stats.send_open_match_rate?.toFixed(1) || "0.0"}%
+                              </TableCell>
+                            </TableRow>
+                            <TableRow>
+                              <TableCell colSpan={2} sx={{ fontWeight: 600 }}>Unmatched</TableCell>
+                              <TableCell align="right" sx={{ color: "#f44336", fontWeight: 600 }}>
+                                {(emailData.stats.total_send_records - (emailData.stats.send_open_success || 0)).toLocaleString()}
+                              </TableCell>
+                              <TableCell align="right">-</TableCell>
+                              <TableCell align="right" sx={{ color: "#f44336", fontWeight: 600 }}>
+                                {((100 - parseFloat(emailData.stats.send_open_match_rate || 0)).toFixed(1))}%
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Box>
+                  )}
+
+                  {/* Send-Open Matched Records Table */}
+                  <Box sx={{ mt: 4 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 700, mb: 1, color: "#667eea", display: "flex", alignItems: "center", gap: 1 }}>
+                      <Email /> Send-Open Matched Records
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
+                      View all send records that were matched with open records. Records with Views = NULL indicate sends that matched but the open record had no tracking data.
+                    </Typography>
+                    <Box sx={{ mb: 1, display: "flex", gap: 1, flexWrap: "wrap" }}>
+                      <Chip 
+                        label={`Total: ${(filteredSendOpen || []).length.toLocaleString()}`} 
+                        size="small" 
+                        color="primary" 
+                        variant="outlined"
+                      />
+                      <Chip 
+                        label={`With Views: ${(filteredSendOpen || []).filter(r => r.Views != null && r.Views !== '').length.toLocaleString()}`} 
+                        size="small" 
+                        color="success" 
+                        variant="outlined"
+                      />
+                      <Chip 
+                        label={`No Views: ${(filteredSendOpen || []).filter(r => r.Views == null || r.Views === '').length.toLocaleString()}`} 
+                        size="small" 
+                        color="warning" 
+                        variant="outlined"
+                      />
+                    </Box>
+                    <DataTable
+                      columns={[
+                        { key: "sent_date", label: "Send Date" },
+                        { key: "recipient_name", label: "Recipient Name" },
+                        { key: "Recipient Email", label: "Email" },
+                        { key: "Subject", label: "Subject" },
+                        { key: "SDR_Name", label: "SDR" },
+                        { key: "Views", label: "Views" },
+                        { key: "Clicks", label: "Clicks" },
+                        { key: "last_opened", label: "Last Opened" },
+                        { key: "Domain", label: "Domain" },
+                      ]}
+                      rows={filteredSendOpen || []}
+                      maxHeight={500}
+                      emptyMessage="No send-open matched records found."
+                    />
+                  </Box>
                 </CardContent>
               </Card>
 
@@ -1696,42 +1825,6 @@ function EmailAnalyticsPage() {
                 </CardContent>
               </Card>
 
-              {/* Overall Pipeline Summary */}
-              <Card sx={{ bgcolor: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", color: "white", boxShadow: 3 }}>
-                <CardContent>
-                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2, display: "flex", alignItems: "center", gap: 1 }}>
-                    <TrendingUp /> Overall Pipeline Efficiency
-                  </Typography>
-                  <Grid container spacing={2}>
-                    <Grid item xs={12} sm={6} md={4}>
-                      <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
-                        Input Records
-                      </Typography>
-                      <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                        {emailData.stats?.total_send_records?.toLocaleString() || "N/A"}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={4}>
-                      <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
-                        Final Output Records
-                      </Typography>
-                      <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                        {filteredForAnalysis?.length?.toLocaleString() || "N/A"}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={4}>
-                      <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
-                        Overall Success Rate
-                      </Typography>
-                      <Typography variant="h5" sx={{ fontWeight: 700 }}>
-                        {emailData.stats?.total_send_records && filteredForAnalysis?.length
-                          ? `${((filteredForAnalysis.length / emailData.stats.total_send_records) * 100).toFixed(1)}%`
-                          : "N/A"}
-                      </Typography>
-                    </Grid>
-                  </Grid>
-                </CardContent>
-              </Card>
             </Box>
           </DialogContent>
           <DialogActions sx={{ p: 2, bgcolor: "#f8f9fa" }}>

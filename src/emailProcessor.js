@@ -54,11 +54,13 @@ export async function processEmailPipeline(sendCsv, openCsv, contactsCsv, option
   const openValid = openNorm.filter((r) => r.sent_date_parsed);
 
   // 4) JOIN: Send ↔ Open (matching mode configurable)
-  const { sendOpenSuccess, sendOpenFailures } = joinSendAndOpen(
+  const joinResult = joinSendAndOpen(
     sendValid,
     openValid,
     matchingMode
   );
+  const { sendOpenSuccess, sendOpenFailures } = joinResult;
+  const strategyMatches = joinResult.strategyMatches || null;
 
   // 5) JOIN: SendOpen ↔ Contacts (by Recipient Email)
   const { successful, contactFailures } = joinWithContacts(
@@ -97,6 +99,7 @@ export async function processEmailPipeline(sendCsv, openCsv, contactsCsv, option
     contact_match_rate: sendOpenSuccess.length > 0
       ? ((successful.length / sendOpenSuccess.length) * 100).toFixed(1)
       : 0,
+    strategy_matches: strategyMatches, // Add strategy breakdown for composite mode
   };
 
   return { successful, failed, stats, matchingMode };
@@ -124,6 +127,18 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
   const sdrStats = [];
   let totalSendRecords = 0;
   let totalOpenRecords = 0;
+  const aggregatedStrategyMatches = {
+    email: 0,
+    name_subject: 0,
+    subject_only: 0,
+    name_only: 0,
+    fuzzy_subject: 0,
+    domain_name: 0,
+    date_range: 0,
+    thread_id: 0,
+    fuzzy_name: 0,
+    date_proximity: 0,
+  };
 
   for (const config of sdrConfigs) {
     const { name } = config;
@@ -160,11 +175,19 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
     const sendValid = sendNorm.filter((r) => r.sent_date_parsed);
     const openValid = openNorm.filter((r) => r.sent_date_parsed);
 
-    const { sendOpenSuccess, sendOpenFailures } = joinSendAndOpen(
+    const joinResult = joinSendAndOpen(
       sendValid,
       openValid,
       matchingMode
     );
+    const { sendOpenSuccess, sendOpenFailures } = joinResult;
+    
+    // Aggregate strategy matches if available
+    if (joinResult.strategyMatches) {
+      Object.keys(aggregatedStrategyMatches).forEach(key => {
+        aggregatedStrategyMatches[key] += (joinResult.strategyMatches[key] || 0);
+      });
+    }
 
     sendOpenSuccess.forEach((row) => {
       row.SDR_Name = label;
@@ -224,6 +247,7 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
     contact_match_rate: allSendOpenSuccess.length > 0
       ? ((successful.length / allSendOpenSuccess.length) * 100).toFixed(1)
       : 0,
+    strategy_matches: matchingMode === 'composite' ? aggregatedStrategyMatches : null,
   };
 
   return { successful, failed, stats, sdrStats, matchingMode };
@@ -299,7 +323,13 @@ function normalizeSend(rows) {
       out.recipient_name = String(out.recipient_name).trim();
 
     // Normalized recipient name for name-based matching
-    out.recipient_name_norm = (out.recipient_name || "").split(",")[0].trim().toLowerCase();
+    // Extract name part (before comma, and before < if email is included)
+    let namePart = (out.recipient_name || "").split(",")[0].trim();
+    // Remove email part if present (e.g., "Name <email@domain.com>" -> "Name")
+    if (namePart.includes("<")) {
+      namePart = namePart.split("<")[0].trim();
+    }
+    out.recipient_name_norm = namePart.toLowerCase();
 
     return out;
   });
@@ -345,13 +375,22 @@ function normalizeOpen(rows) {
     }
 
     // Normalized recipient name for name-based matching
-    out.recipient_name_norm = (out.recipient_name || "").split(",")[0].trim().toLowerCase();
+    // Extract name part (before comma, and before < if email is included)
+    let namePart = (out.recipient_name || "").split(",")[0].trim();
+    // Remove email part if present (e.g., "Name <email@domain.com>" -> "Name")
+    if (namePart.includes("<")) {
+      namePart = namePart.split("<")[0].trim();
+    }
+    out.recipient_name_norm = namePart.toLowerCase();
 
-    // Convert date format from "Jul 3, 2025, 02:14:21" to "DD/MM/YYYY HH:MM:SS" (matching Python _apply_filtering_rules)
+    // Convert date format from "Jul 3, 2025, 02:14:21" or "2025-11-25 14:19:51" to "DD/MM/YYYY HH:MM:SS" (matching Python _apply_filtering_rules)
+    // IMPORTANT: Use parseDateFlexible to ensure correct parsing of YYYY-MM-DD format before conversion
     if (out.sent_date) {
       try {
-        const parsed = new Date(out.sent_date);
-        if (!isNaN(parsed.getTime())) {
+        // First try to parse using parseDateFlexible (handles YYYY-MM-DD format correctly)
+        const parsed = parseDateFlexible(out.sent_date);
+        if (parsed && !isNaN(parsed.getTime())) {
+          // Convert to DD/MM/YYYY HH:MM:SS format
           const dd = String(parsed.getDate()).padStart(2, "0");
           const mm = String(parsed.getMonth() + 1).padStart(2, "0");
           const yyyy = parsed.getFullYear();
@@ -359,6 +398,18 @@ function normalizeOpen(rows) {
           const MM = String(parsed.getMinutes()).padStart(2, "0");
           const SS = String(parsed.getSeconds()).padStart(2, "0");
           out.sent_date = `${dd}/${mm}/${yyyy} ${HH}:${MM}:${SS}`;
+        } else {
+          // Fallback to native Date parsing if parseDateFlexible fails
+          const parsedNative = new Date(out.sent_date);
+          if (!isNaN(parsedNative.getTime())) {
+            const dd = String(parsedNative.getDate()).padStart(2, "0");
+            const mm = String(parsedNative.getMonth() + 1).padStart(2, "0");
+            const yyyy = parsedNative.getFullYear();
+            const HH = String(parsedNative.getHours()).padStart(2, "0");
+            const MM = String(parsedNative.getMinutes()).padStart(2, "0");
+            const SS = String(parsedNative.getSeconds()).padStart(2, "0");
+          out.sent_date = `${dd}/${mm}/${yyyy} ${HH}:${MM}:${SS}`;
+          }
         }
       } catch (e) {
         // Keep original if parsing fails
@@ -532,28 +583,74 @@ function joinSendAndOpen(sendRows, openRows, matchingMode = 'email_only') {
     finalFailed = nameTs2.failed;
   } else if (matchingMode === 'composite') {
     // Multi-strategy cascade for maximum coverage (~85%)
+    // Track matches per strategy for reporting
+    const strategyMatches = {};
+    
     // Strategy 1: Email match (highest confidence)
     const emailResult = phase1Matching(sendRows, openRows);
     phase1Success = emailResult.successful;
     usedOpenIndices = emailResult.usedIndices;
+    strategyMatches['email'] = phase1Success.length;
     
     // Strategy 2: Name + Subject match (medium confidence)
     const nameSubjectResult = matchByNameAndSubject(emailResult.failed, openRows, usedOpenIndices);
     const nameSubjectSuccess = nameSubjectResult.successful;
     nameSubjectSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['name_subject'] = nameSubjectSuccess.length;
     
     // Strategy 3: Subject-only match (lower confidence)
     const subjectResult = matchBySubjectOnly(nameSubjectResult.failed, openRows, usedOpenIndices);
     const subjectSuccess = subjectResult.successful;
     subjectSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['subject_only'] = subjectSuccess.length;
     
     // Strategy 4: Name-only match (lowest confidence, optional)
     const nameResult = matchByNameOnly(subjectResult.failed, openRows, usedOpenIndices);
     const nameSuccess = nameResult.successful;
-    finalFailed = nameResult.failed;
+    nameSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['name_only'] = nameSuccess.length;
+    
+    // Strategy 5: Fuzzy subject matching (handle "Re:", "Fwd:", case variations)
+    const fuzzySubjectResult = matchByFuzzySubject(nameResult.failed, openRows, usedOpenIndices);
+    const fuzzySubjectSuccess = fuzzySubjectResult.successful;
+    fuzzySubjectSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['fuzzy_subject'] = fuzzySubjectSuccess.length;
+    
+    // Strategy 6: Email domain + name matching (for cases where email domain matches but full email doesn't)
+    const domainNameResult = matchByDomainAndName(fuzzySubjectResult.failed, openRows, usedOpenIndices);
+    const domainNameSuccess = domainNameResult.successful;
+    domainNameSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['domain_name'] = domainNameSuccess.length;
+    
+    // Strategy 7: Date range matching (match by date only, ignoring time, for same name/subject)
+    const dateRangeResult = matchByDateRange(domainNameResult.failed, openRows, usedOpenIndices);
+    const dateRangeSuccess = dateRangeResult.successful;
+    dateRangeSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['date_range'] = dateRangeSuccess.length;
+    
+    // Strategy 8: Thread ID matching (if both have Thread ID, that's a strong signal)
+    const threadIdResult = matchByThreadId(dateRangeResult.failed, openRows, usedOpenIndices);
+    const threadIdSuccess = threadIdResult.successful;
+    threadIdSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['thread_id'] = threadIdSuccess.length;
+    
+    // Strategy 9: Fuzzy name matching (handle name variations like "John Smith" vs "John A. Smith")
+    const fuzzyNameResult = matchByFuzzyName(threadIdResult.failed, openRows, usedOpenIndices);
+    const fuzzyNameSuccess = fuzzyNameResult.successful;
+    fuzzyNameSuccess.forEach(r => { if (r._matched_index != null) usedOpenIndices.add(r._matched_index); });
+    strategyMatches['fuzzy_name'] = fuzzyNameSuccess.length;
+    
+    // Strategy 10: Last resort - match by date proximity only (no name/subject requirement)
+    const lastResortResult = matchByDateProximity(fuzzyNameResult.failed, openRows, usedOpenIndices);
+    const lastResortSuccess = lastResortResult.successful;
+    finalFailed = lastResortResult.failed;
+    strategyMatches['date_proximity'] = lastResortSuccess.length;
     
     // Combine all successful matches
-    phase2Success = [...nameSubjectSuccess, ...subjectSuccess, ...nameSuccess];
+    phase2Success = [...nameSubjectSuccess, ...subjectSuccess, ...nameSuccess, ...fuzzySubjectSuccess, ...domainNameSuccess, ...dateRangeSuccess, ...threadIdSuccess, ...fuzzyNameSuccess, ...lastResortSuccess];
+    
+    // Store strategy matches in finalFailed for retrieval
+    finalFailed._strategyMatches = strategyMatches;
   } else {
     // Default: Email-only matching (current optimized approach)
     const phase1Result = phase1Matching(sendRows, openRows);
@@ -584,10 +681,19 @@ function joinSendAndOpen(sendRows, openRows, matchingMode = 'email_only') {
   // Combine successful matches + unmatched with NULLs
   const allRecords = [...allSuccess, ...unmatchedWithNulls];
 
+  // Get strategy matches from composite mode if available
+  let strategyMatches = null;
+  if (matchingMode === 'composite' && finalFailed && finalFailed._strategyMatches) {
+    strategyMatches = finalFailed._strategyMatches;
+    // Clean up - remove the temporary property
+    delete finalFailed._strategyMatches;
+  }
+
   return {
     sendOpenSuccess: allRecords,
     sendOpenFailures: [], // Empty because we include all in success with NULLs (LEFT JOIN)
     matchingMode, // Return which mode was used
+    strategyMatches, // Strategy breakdown for composite mode
   };
 }
 
@@ -619,45 +725,144 @@ function phase1Matching(sendRows, openRows) {
     }
   });
 
-  sendRows.forEach((send) => {
+  // Also build name-based lookup as fallback (for Opens CSV with name-only Recipient field)
+  const openByName = new Map();
+  openRows.forEach((open, idx) => {
+    const name = (open.recipient_name_norm || "").toLowerCase().trim();
+    if (name) {
+      if (!openByName.has(name)) {
+        openByName.set(name, []);
+      }
+      openByName.get(name).push({ ...open, _index: idx });
+    }
+  });
+
+  // Sort sends by date to process chronologically (helps with matching multiple sends to multiple opens)
+  const sortedSends = [...sendRows].sort((a, b) => {
+    const dateA = a.sent_date_parsed || new Date(0);
+    const dateB = b.sent_date_parsed || new Date(0);
+    return dateA.getTime() - dateB.getTime();
+  });
+
+  sortedSends.forEach((send) => {
     // Use 'Recipient Email' field for matching (more reliable than recipient_name)
     const email = (send["Recipient Email"] || send.recipient_email || send.recipient_name || "").toLowerCase().trim();
     
     // Get all opens for this email
-    const emailOpens = openByEmail.get(email) || [];
+    let emailOpens = openByEmail.get(email) || [];
+    
+    // If no email matches, try name-based matching as fallback
+    if (emailOpens.length === 0) {
+      const sendName = (send.recipient_name_norm || "").toLowerCase().trim();
+      if (sendName) {
+        emailOpens = openByName.get(sendName) || [];
+      }
+    }
     
     if (emailOpens.length === 0) {
-      // No opens found for this email
-      failed.push({ ...send, failure_reason: "no_opens_for_email" });
+      // No opens found for this email or name
+      failed.push({ ...send, failure_reason: "no_opens_for_email_or_name" });
     } else if (emailOpens.length === 1) {
-      // Single match - use it
+      // Single match - validate timestamp to ensure it's correct
       const matched = emailOpens[0];
+      const sendDate = send.sent_date_parsed;
+      const openDate = matched.sent_date_parsed;
+      
+      // Check if timestamps are within reasonable range (10 minutes for better coverage)
+      // This ensures Send CSV sent_date matches Opens CSV "Sent" field
+      // For email matching, we're more lenient since email is the primary identifier
+      let timestampValid = true;
+      if (sendDate && openDate) {
+        const timeDiff = Math.abs(openDate.getTime() - sendDate.getTime());
+        timestampValid = timeDiff <= 600000; // 10 minutes in milliseconds (increased for better coverage)
+      }
+      
+      // Use the match even if timestamp is slightly off (for email matching, email is primary)
+      // Email matching has highest confidence, so we accept matches even with wider time windows
       usedIndices.add(matched._index);
       successful.push({
         ...send,
         Views: matched.Views || 0,
         Clicks: matched.Clicks || 0,
         last_opened: matched.last_opened || matched.sent_date,
+        _timestamp_valid: timestampValid, // Flag for debugging
       });
     } else {
-      // Multiple opens for same email - take the most recent one
-      const mostRecent = emailOpens.reduce((latest, current) => {
-        if (!latest) return current;
-        const latestDate = latest.sent_date_parsed || new Date(0);
-        const currentDate = current.sent_date_parsed || new Date(0);
-        return currentDate > latestDate ? current : latest;
+      // Multiple opens for same email - match by closest timestamp
+      // The Opens CSV "Sent" field indicates which send record it corresponds to
+      const sendDate = send.sent_date_parsed;
+      if (!sendDate) {
+        failed.push({ ...send, failure_reason: "invalid_send_date" });
+        return;
+      }
+      
+      // Find the open record with the closest timestamp to this send record
+      // Filter to only unused opens
+      const unusedOpens = emailOpens.filter(open => !usedIndices.has(open._index));
+      
+      if (unusedOpens.length === 0) {
+        // All opens for this email are already used - try to find closest match anyway
+        // This handles cases where we need to match multiple sends to multiple opens
+        const closest = emailOpens.reduce((best, current) => {
+          if (!current.sent_date_parsed) return best;
+          if (!best) return current;
+          
+          const sendTime = sendDate.getTime();
+          const bestTime = best.sent_date_parsed.getTime();
+          const currentTime = current.sent_date_parsed.getTime();
+          
+          const bestDiff = Math.abs(bestTime - sendTime);
+          const currentDiff = Math.abs(currentTime - sendTime);
+          
+          return currentDiff < bestDiff ? current : best;
       }, null);
       
-      if (mostRecent) {
-        usedIndices.add(mostRecent._index);
+        if (closest) {
+          usedIndices.add(closest._index);
         successful.push({
           ...send,
-          Views: mostRecent.Views || 0,
-          Clicks: mostRecent.Clicks || 0,
-          last_opened: mostRecent.last_opened || mostRecent.sent_date,
+            Views: closest.Views || 0,
+            Clicks: closest.Clicks || 0,
+            last_opened: closest.last_opened || closest.sent_date,
         });
       } else {
         failed.push({ ...send, failure_reason: "multiple_matches_but_no_valid_date" });
+        }
+      } else {
+        // Sort unused opens by their sent_date to help with chronological matching
+        // This ensures Send 1 (earlier) matches with Open 1 (earlier), Send 2 (later) with Open 2 (later)
+        const sortedUnusedOpens = unusedOpens
+          .filter(open => open.sent_date_parsed)
+          .sort((a, b) => a.sent_date_parsed.getTime() - b.sent_date_parsed.getTime());
+        
+        // Find closest unused open by timestamp
+        // This ensures correct pairing: Send 1 -> Open 1, Send 2 -> Open 2 (by closest timestamp)
+        const closest = sortedUnusedOpens.reduce((best, current) => {
+          if (!current.sent_date_parsed) return best;
+          if (!best) return current;
+          
+          const sendTime = sendDate.getTime();
+          const bestTime = best.sent_date_parsed.getTime();
+          const currentTime = current.sent_date_parsed.getTime();
+          
+          const bestDiff = Math.abs(bestTime - sendTime);
+          const currentDiff = Math.abs(currentTime - sendTime);
+          
+          // Prefer the closest timestamp match
+          return currentDiff < bestDiff ? current : best;
+        }, null);
+        
+        if (closest) {
+          usedIndices.add(closest._index);
+          successful.push({
+            ...send,
+            Views: closest.Views || 0,
+            Clicks: closest.Clicks || 0,
+            last_opened: closest.last_opened || closest.sent_date,
+          });
+        } else {
+          failed.push({ ...send, failure_reason: "multiple_matches_but_no_valid_date" });
+        }
       }
     }
   });
@@ -696,35 +901,69 @@ function phase2Matching(failedRecords, openRows, usedIndices) {
     }
   });
 
+  // Also build name-based lookup as fallback (for Opens CSV with name-only Recipient field)
+  const unusedByName = new Map();
+  unusedOpens.forEach((open) => {
+    const name = (open.recipient_name_norm || "").toLowerCase().trim();
+    if (name) {
+      if (!unusedByName.has(name)) {
+        unusedByName.set(name, []);
+      }
+      unusedByName.get(name).push(open);
+    }
+  });
+
   failedRecords.forEach((failed) => {
     // Use 'Recipient Email' field for matching (more reliable than recipient_name)
     const email = (failed["Recipient Email"] || failed.recipient_email || failed.recipient_name || "").toLowerCase().trim();
     
     // Get unused opens for this email
-    const emailOpens = unusedByEmail.get(email) || [];
+    let emailOpens = unusedByEmail.get(email) || [];
+    
+    // If no email matches, try name-based matching as fallback
+    if (emailOpens.length === 0) {
+      const sendName = (failed.recipient_name_norm || "").toLowerCase().trim();
+      if (sendName) {
+        emailOpens = unusedByName.get(sendName) || [];
+      }
+    }
     
     if (emailOpens.length > 0) {
-      // Take the most recent unused open
-      const mostRecent = emailOpens.reduce((latest, current) => {
-        if (!latest) return current;
-        const latestDate = latest.sent_date_parsed || new Date(0);
-        const currentDate = current.sent_date_parsed || new Date(0);
-        return currentDate > latestDate ? current : latest;
+      // Match by closest timestamp to this send record
+      const sendDate = failed.sent_date_parsed;
+      if (!sendDate) {
+        finalFailed.push({ ...failed, failure_reason: "invalid_send_date" });
+        return;
+      }
+      
+      // Find the open record with the closest timestamp to this send record
+      const closest = emailOpens.reduce((best, current) => {
+        if (!current.sent_date_parsed) return best;
+        if (!best) return current;
+        
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed.getTime();
+        const currentTime = current.sent_date_parsed.getTime();
+        
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        
+        return currentDiff < bestDiff ? current : best;
       }, null);
       
-      if (mostRecent) {
+      if (closest) {
         successful.push({
           ...failed,
-          Views: mostRecent.Views || 0,
-          Clicks: mostRecent.Clicks || 0,
-          last_opened: mostRecent.last_opened || mostRecent.sent_date,
+          Views: closest.Views || 0,
+          Clicks: closest.Clicks || 0,
+          last_opened: closest.last_opened || closest.sent_date,
         });
       } else {
         finalFailed.push({ ...failed, failure_reason: "no_valid_unused_open" });
       }
     } else {
-      // No unused opens for this email
-      finalFailed.push({ ...failed, failure_reason: "no_unused_opens_for_email" });
+      // No unused opens for this email or name
+      finalFailed.push({ ...failed, failure_reason: "no_unused_opens_for_email_or_name" });
     }
   });
 
@@ -1189,23 +1428,76 @@ function matchByNameAndSubject(failedRecords, openRows, usedIndices) {
     const matches = opensByNameSubject.get(key) || [];
     
     if (matches.length > 0) {
-      // Take the most recent match
-      const mostRecent = matches.reduce((latest, current) => {
-        if (!latest) return current;
-        const latestDate = latest.sent_date_parsed || new Date(0);
-        const currentDate = current.sent_date_parsed || new Date(0);
-        return currentDate > latestDate ? current : latest;
-      }, null);
+      // Validate timestamp: Send CSV sent_date should match Opens CSV "Sent" field (within 60 seconds)
+      const sendDate = failed.sent_date_parsed;
+      if (!sendDate) {
+        finalFailed.push(failed);
+        return;
+      }
       
-      if (mostRecent) {
+      // Filter matches by timestamp proximity (within 10 minutes for better coverage)
+      // Increased to 10 minutes to catch more matches
+      const timestampMatches = matches.filter(open => {
+        const openDate = open.sent_date_parsed;
+        if (!openDate) return false;
+        const timeDiff = Math.abs(openDate.getTime() - sendDate.getTime());
+        return timeDiff <= 600000; // 10 minutes in milliseconds (600000ms)
+      });
+      
+      // Filter to only unused opens to prevent mixing matches
+      const unusedMatches = matches.filter(open => !usedIndices.has(open._index));
+      const unusedTimestampMatches = timestampMatches.filter(open => !usedIndices.has(open._index));
+      
+      let bestMatch = null;
+      if (unusedTimestampMatches.length > 0) {
+        // If we have timestamp-validated unused matches, use the closest one
+        // Sort by timestamp to ensure chronological matching (Send 1 -> Open 1, Send 2 -> Open 2)
+        const sortedTimestampMatches = unusedTimestampMatches
+          .sort((a, b) => a.sent_date_parsed.getTime() - b.sent_date_parsed.getTime());
+        
+        bestMatch = sortedTimestampMatches.reduce((closest, current) => {
+          if (!closest) return current;
+          const sendTime = sendDate.getTime();
+          const closestTime = closest.sent_date_parsed.getTime();
+          const currentTime = current.sent_date_parsed.getTime();
+          const closestDiff = Math.abs(closestTime - sendTime);
+          const currentDiff = Math.abs(currentTime - sendTime);
+          return currentDiff < closestDiff ? current : closest;
+      }, null);
+      } else if (unusedMatches.length === 1) {
+        // If only one unused match, use it (but lower confidence)
+        bestMatch = unusedMatches[0];
+      } else if (unusedMatches.length > 1) {
+        // Multiple unused matches but none within timestamp window - take closest anyway
+        // Sort chronologically to ensure proper pairing
+        const sortedUnused = unusedMatches
+          .filter(m => m.sent_date_parsed)
+          .sort((a, b) => a.sent_date_parsed.getTime() - b.sent_date_parsed.getTime());
+        
+        bestMatch = sortedUnused.reduce((closest, current) => {
+          if (!closest) return current;
+          const sendTime = sendDate.getTime();
+          const closestTime = closest.sent_date_parsed?.getTime() || 0;
+          const currentTime = current.sent_date_parsed?.getTime() || 0;
+          const closestDiff = Math.abs(closestTime - sendTime);
+          const currentDiff = Math.abs(currentTime - sendTime);
+          return currentDiff < closestDiff ? current : closest;
+        }, null);
+      } else if (matches.length === 1 && !usedIndices.has(matches[0]._index)) {
+        // Only one match total and it's unused
+        bestMatch = matches[0];
+      }
+      
+      if (bestMatch) {
+        const hasTimestampMatch = timestampMatches.length > 0;
         successful.push({
           ...failed,
-          Views: mostRecent.Views || 0,
-          Clicks: mostRecent.Clicks || 0,
-          last_opened: mostRecent.last_opened || mostRecent.sent_date,
-          _matched_index: mostRecent._index,
+          Views: bestMatch.Views || 0,
+          Clicks: bestMatch.Clicks || 0,
+          last_opened: bestMatch.last_opened || bestMatch.sent_date,
+          _matched_index: bestMatch._index,
           _match_method: 'name_subject',
-          _match_confidence: 0.8,
+          _match_confidence: hasTimestampMatch ? 0.8 : 0.6, // Lower confidence if no timestamp match
         });
       } else {
         finalFailed.push(failed);
@@ -1226,7 +1518,8 @@ function matchBySubjectOnly(failedRecords, openRows, usedIndices) {
   const successful = [];
   const finalFailed = [];
   
-  // Build lookup: lowercase_subject -> opens (keep most recent per subject)
+  // Build lookup: lowercase_subject -> opens (store all matches, not just most recent)
+  // This allows us to match multiple sends with multiple opens by the same subject
   const opensBySubject = new Map();
   openRows.forEach((open, idx) => {
     if (usedIndices.has(idx)) return;
@@ -1234,10 +1527,10 @@ function matchBySubjectOnly(failedRecords, openRows, usedIndices) {
     const subject = (open.Subject || "").toLowerCase().trim();
     if (!subject) return;
     
-    const existing = opensBySubject.get(subject);
-    if (!existing || ((open.sent_date_parsed || new Date(0)) > (existing.sent_date_parsed || new Date(0)))) {
-      opensBySubject.set(subject, { ...open, _index: idx });
+    if (!opensBySubject.has(subject)) {
+      opensBySubject.set(subject, []);
     }
+    opensBySubject.get(subject).push({ ...open, _index: idx });
   });
   
   failedRecords.forEach((failed) => {
@@ -1248,9 +1541,41 @@ function matchBySubjectOnly(failedRecords, openRows, usedIndices) {
       return;
     }
     
-    const match = opensBySubject.get(subject);
+    const matches = opensBySubject.get(subject) || [];
     
-    if (match && !usedIndices.has(match._index)) {
+    // Filter to unused matches and find best by timestamp
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      const sendDate = failed.sent_date_parsed;
+      
+      // Find best match by timestamp (closest to send date)
+      const match = unusedMatches.reduce((best, current) => {
+        if (!best) return current;
+        if (!sendDate || !current.sent_date_parsed) return best;
+        
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed?.getTime() || 0;
+        const currentTime = current.sent_date_parsed.getTime();
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        return currentDiff < bestDiff ? current : best;
+      }, null);
+      
+      if (match) {
+        // Validate timestamp: Send CSV sent_date should match Opens CSV "Sent" field (within 60 seconds)
+        const sendDate = failed.sent_date_parsed;
+        const openDate = match.sent_date_parsed;
+        
+        let timestampValid = false;
+        let confidence = 0.5;
+        
+        if (sendDate && openDate) {
+          const timeDiff = Math.abs(openDate.getTime() - sendDate.getTime());
+          timestampValid = timeDiff <= 600000; // 10 minutes in milliseconds (increased for better coverage)
+          confidence = timestampValid ? 0.5 : 0.3; // Lower confidence if timestamp doesn't match
+        }
+        
       successful.push({
         ...failed,
         Views: match.Views || 0,
@@ -1258,9 +1583,12 @@ function matchBySubjectOnly(failedRecords, openRows, usedIndices) {
         last_opened: match.last_opened || match.sent_date,
         _matched_index: match._index,
         _match_method: 'subject_only',
-        _match_confidence: 0.5,
+          _match_confidence: confidence,
       });
-      usedIndices.add(match._index); // Mark as used
+        usedIndices.add(match._index); // Mark as used to prevent mixing
+      } else {
+        finalFailed.push(failed);
+      }
     } else {
       finalFailed.push(failed);
     }
@@ -1277,7 +1605,8 @@ function matchByNameOnly(failedRecords, openRows, usedIndices) {
   const successful = [];
   const finalFailed = [];
   
-  // Build lookup: normalized_name -> opens (keep most recent per name)
+  // Build lookup: normalized_name -> opens (store all matches, not just most recent)
+  // This allows us to match multiple sends with multiple opens by the same name
   const opensByName = new Map();
   openRows.forEach((open, idx) => {
     if (usedIndices.has(idx)) return;
@@ -1285,10 +1614,10 @@ function matchByNameOnly(failedRecords, openRows, usedIndices) {
     const name = (open.recipient_name_norm || "").trim();
     if (!name || name.length < 3) return;
     
-    const existing = opensByName.get(name);
-    if (!existing || ((open.sent_date_parsed || new Date(0)) > (existing.sent_date_parsed || new Date(0)))) {
-      opensByName.set(name, { ...open, _index: idx });
+    if (!opensByName.has(name)) {
+      opensByName.set(name, []);
     }
+    opensByName.get(name).push({ ...open, _index: idx });
   });
   
   failedRecords.forEach((failed) => {
@@ -1299,9 +1628,40 @@ function matchByNameOnly(failedRecords, openRows, usedIndices) {
       return;
     }
     
-    const match = opensByName.get(name);
+    const matches = opensByName.get(name) || [];
     
-    if (match && !usedIndices.has(match._index)) {
+    // Filter to unused matches and find best by timestamp
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      const sendDate = failed.sent_date_parsed;
+      
+      // Find best match by timestamp (closest to send date)
+      const match = unusedMatches.reduce((best, current) => {
+        if (!best) return current;
+        if (!sendDate || !current.sent_date_parsed) return best;
+        
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed?.getTime() || 0;
+        const currentTime = current.sent_date_parsed.getTime();
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        return currentDiff < bestDiff ? current : best;
+      }, null);
+      
+      if (match) {
+        // Validate timestamp: Send CSV sent_date should match Opens CSV "Sent" field (within 60 seconds)
+        const openDate = match.sent_date_parsed;
+        
+        let timestampValid = false;
+        let confidence = 0.4;
+        
+        if (sendDate && openDate) {
+          const timeDiff = Math.abs(openDate.getTime() - sendDate.getTime());
+          timestampValid = timeDiff <= 600000; // 10 minutes in milliseconds (increased for better coverage)
+          confidence = timestampValid ? 0.4 : 0.2; // Lower confidence if timestamp doesn't match
+        }
+        
       successful.push({
         ...failed,
         Views: match.Views || 0,
@@ -1309,9 +1669,444 @@ function matchByNameOnly(failedRecords, openRows, usedIndices) {
         last_opened: match.last_opened || match.sent_date,
         _matched_index: match._index,
         _match_method: 'name_only',
-        _match_confidence: 0.4,
+          _match_confidence: confidence,
+        });
+        usedIndices.add(match._index); // Mark as used to prevent mixing
+      } else {
+        finalFailed.push(failed);
+      }
+    } else {
+      finalFailed.push(failed);
+    }
+  });
+  
+  return { successful, failed: finalFailed };
+}
+
+/* ---------------------- Enhanced Composite Matching Strategies ---------------------- */
+
+/**
+ * Match by fuzzy subject (handles "Re:", "Fwd:", case variations, whitespace)
+ * Lower confidence but catches more matches
+ */
+function matchByFuzzySubject(failedRecords, openRows, usedIndices) {
+  const successful = [];
+  const finalFailed = [];
+  
+  // Normalize subject: remove "Re:", "Fwd:", trim, lowercase
+  const normalizeSubject = (subject) => {
+    if (!subject) return "";
+    return String(subject)
+      .replace(/^(re|fwd|fw):\s*/i, "") // Remove Re:/Fwd: prefix
+      .replace(/\s+/g, " ") // Normalize whitespace
+      .trim()
+      .toLowerCase();
+  };
+  
+  // Build lookup: normalized_subject -> opens
+  const opensByFuzzySubject = new Map();
+  openRows.forEach((open, idx) => {
+    if (usedIndices.has(idx)) return;
+    
+    const subject = normalizeSubject(open.Subject);
+    if (!subject || subject.length < 3) return;
+    
+    if (!opensByFuzzySubject.has(subject)) {
+      opensByFuzzySubject.set(subject, []);
+    }
+    opensByFuzzySubject.get(subject).push({ ...open, _index: idx });
+  });
+  
+  failedRecords.forEach((failed) => {
+    const subject = normalizeSubject(failed.Subject);
+    
+    if (!subject || subject.length < 3) {
+      finalFailed.push(failed);
+      return;
+    }
+    
+    const matches = opensByFuzzySubject.get(subject) || [];
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      const sendDate = failed.sent_date_parsed;
+      const match = unusedMatches.reduce((best, current) => {
+        if (!best) return current;
+        if (!sendDate || !current.sent_date_parsed) return best;
+        
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed?.getTime() || 0;
+        const currentTime = current.sent_date_parsed.getTime();
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        return currentDiff < bestDiff ? current : best;
+      }, null);
+      
+      if (match) {
+        successful.push({
+          ...failed,
+          Views: match.Views || 0,
+          Clicks: match.Clicks || 0,
+          last_opened: match.last_opened || match.sent_date,
+          _matched_index: match._index,
+          _match_method: 'fuzzy_subject',
+          _match_confidence: 0.3,
+        });
+      } else {
+        finalFailed.push(failed);
+      }
+    } else {
+      finalFailed.push(failed);
+    }
+  });
+  
+  return { successful, failed: finalFailed };
+}
+
+/**
+ * Match by email domain + name (for cases where full email doesn't match but domain does)
+ */
+function matchByDomainAndName(failedRecords, openRows, usedIndices) {
+  const successful = [];
+  const finalFailed = [];
+  
+  // Extract domain from email
+  const getDomain = (email) => {
+    if (!email || !email.includes("@")) return null;
+    return email.split("@")[1]?.toLowerCase().trim();
+  };
+  
+  // Build lookup: (domain, normalized_name) -> opens
+  const opensByDomainName = new Map();
+  openRows.forEach((open, idx) => {
+    if (usedIndices.has(idx)) return;
+    
+    // Try to extract email from Recipient field
+    const originalRecipient = open._original_recipient || open.Recipient || open.recipient_name || "";
+    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/g;
+    const emails = [...originalRecipient.matchAll(emailRegex)].map(m => m[1].toLowerCase());
+    
+    const name = (open.recipient_name_norm || "").trim();
+    if (!name || name.length < 3) return;
+    
+    for (const email of emails) {
+      const domain = getDomain(email);
+      if (domain) {
+        const key = `${domain}|||${name}`;
+        if (!opensByDomainName.has(key)) {
+          opensByDomainName.set(key, []);
+        }
+        opensByDomainName.get(key).push({ ...open, _index: idx });
+        break; // Only add once per open
+      }
+    }
+  });
+  
+  failedRecords.forEach((failed) => {
+    const email = (failed["Recipient Email"] || "").toLowerCase().trim();
+    const domain = getDomain(email);
+    const name = (failed.recipient_name_norm || "").trim();
+    
+    if (!domain || !name || name.length < 3) {
+      finalFailed.push(failed);
+      return;
+    }
+    
+    const key = `${domain}|||${name}`;
+    const matches = opensByDomainName.get(key) || [];
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      const sendDate = failed.sent_date_parsed;
+      const match = unusedMatches.reduce((best, current) => {
+        if (!best) return current;
+        if (!sendDate || !current.sent_date_parsed) return best;
+        
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed?.getTime() || 0;
+        const currentTime = current.sent_date_parsed.getTime();
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        return currentDiff < bestDiff ? current : best;
+      }, null);
+      
+      if (match) {
+        successful.push({
+          ...failed,
+          Views: match.Views || 0,
+          Clicks: match.Clicks || 0,
+          last_opened: match.last_opened || match.sent_date,
+          _matched_index: match._index,
+          _match_method: 'domain_name',
+          _match_confidence: 0.25,
+        });
+      } else {
+        finalFailed.push(failed);
+      }
+    } else {
+      finalFailed.push(failed);
+    }
+  });
+  
+  return { successful, failed: finalFailed };
+}
+
+/**
+ * Match by date range (same day) + name/subject (ignores time, matches by date only)
+ * Very low confidence but catches cases where timestamps are off
+ */
+function matchByDateRange(failedRecords, openRows, usedIndices) {
+  const successful = [];
+  const finalFailed = [];
+  
+  // Get date only (ignore time)
+  const getDateOnly = (date) => {
+    if (!date) return null;
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return null;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+  
+  // Build lookup: (date_only, normalized_name, normalized_subject) -> opens
+  const opensByDateNameSubject = new Map();
+  openRows.forEach((open, idx) => {
+    if (usedIndices.has(idx)) return;
+    
+    const dateOnly = getDateOnly(open.sent_date_parsed);
+    const name = (open.recipient_name_norm || "").trim();
+    const subject = ((open.Subject || "").toLowerCase().trim()).substring(0, 50); // First 50 chars
+    
+    if (!dateOnly || !name || name.length < 3) return;
+    
+    const key = `${dateOnly.getTime()}|||${name}|||${subject}`;
+    if (!opensByDateNameSubject.has(key)) {
+      opensByDateNameSubject.set(key, []);
+    }
+    opensByDateNameSubject.get(key).push({ ...open, _index: idx });
+  });
+  
+  failedRecords.forEach((failed) => {
+    const dateOnly = getDateOnly(failed.sent_date_parsed);
+    const name = (failed.recipient_name_norm || "").trim();
+    const subject = ((failed.Subject || "").toLowerCase().trim()).substring(0, 50);
+    
+    if (!dateOnly || !name || name.length < 3) {
+      finalFailed.push(failed);
+      return;
+    }
+    
+    const key = `${dateOnly.getTime()}|||${name}|||${subject}`;
+    const matches = opensByDateNameSubject.get(key) || [];
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      // Take first unused match (they're all same day)
+      const match = unusedMatches[0];
+      
+      successful.push({
+        ...failed,
+        Views: match.Views || 0,
+        Clicks: match.Clicks || 0,
+        last_opened: match.last_opened || match.sent_date,
+        _matched_index: match._index,
+        _match_method: 'date_range',
+        _match_confidence: 0.2,
       });
-      usedIndices.add(match._index); // Mark as used
+    } else {
+      finalFailed.push(failed);
+    }
+  });
+  
+  return { successful, failed: finalFailed };
+}
+
+/**
+ * Match by Thread ID (if available, this is a very strong signal)
+ */
+function matchByThreadId(failedRecords, openRows, usedIndices) {
+  const successful = [];
+  const finalFailed = [];
+  
+  // Build lookup: thread_id -> opens
+  const opensByThreadId = new Map();
+  openRows.forEach((open, idx) => {
+    if (usedIndices.has(idx)) return;
+    
+    const threadId = (open["Thread ID"] || open.thread_id || open.ThreadID || "").toString().trim();
+    if (!threadId || threadId === "" || threadId === "undefined" || threadId === "null") return;
+    
+    if (!opensByThreadId.has(threadId)) {
+      opensByThreadId.set(threadId, []);
+    }
+    opensByThreadId.get(threadId).push({ ...open, _index: idx });
+  });
+  
+  failedRecords.forEach((failed) => {
+    const threadId = (failed["Thread ID"] || failed.thread_id || failed.ThreadID || "").toString().trim();
+    
+    if (!threadId || threadId === "" || threadId === "undefined" || threadId === "null") {
+      finalFailed.push(failed);
+      return;
+    }
+    
+    const matches = opensByThreadId.get(threadId) || [];
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      // Thread ID is a strong signal, take the first unused match
+      const match = unusedMatches[0];
+      
+      successful.push({
+        ...failed,
+        Views: match.Views || 0,
+        Clicks: match.Clicks || 0,
+        last_opened: match.last_opened || match.sent_date,
+        _matched_index: match._index,
+        _match_method: 'thread_id',
+        _match_confidence: 0.9, // High confidence for Thread ID matches
+      });
+    } else {
+      finalFailed.push(failed);
+    }
+  });
+  
+  return { successful, failed: finalFailed };
+}
+
+/**
+ * Match by fuzzy name (handle variations like "John Smith" vs "John A. Smith", "J. Smith")
+ */
+function matchByFuzzyName(failedRecords, openRows, usedIndices) {
+  const successful = [];
+  const finalFailed = [];
+  
+  // Normalize name for fuzzy matching: remove middle initials, normalize whitespace
+  const normalizeNameForFuzzy = (name) => {
+    if (!name) return "";
+    return String(name)
+      .toLowerCase()
+      .replace(/\b[a-z]\.\s*/g, "") // Remove single letter initials like "J. "
+      .replace(/\s+/g, " ") // Normalize whitespace
+      .trim();
+  };
+  
+  // Build lookup: normalized_fuzzy_name -> opens
+  const opensByFuzzyName = new Map();
+  openRows.forEach((open, idx) => {
+    if (usedIndices.has(idx)) return;
+    
+    const fuzzyName = normalizeNameForFuzzy(open.recipient_name_norm || open.recipient_name);
+    if (!fuzzyName || fuzzyName.length < 3) return;
+    
+    if (!opensByFuzzyName.has(fuzzyName)) {
+      opensByFuzzyName.set(fuzzyName, []);
+    }
+    opensByFuzzyName.get(fuzzyName).push({ ...open, _index: idx });
+  });
+  
+  failedRecords.forEach((failed) => {
+    const fuzzyName = normalizeNameForFuzzy(failed.recipient_name_norm || failed.recipient_name);
+    
+    if (!fuzzyName || fuzzyName.length < 3) {
+      finalFailed.push(failed);
+      return;
+    }
+    
+    const matches = opensByFuzzyName.get(fuzzyName) || [];
+    const unusedMatches = matches.filter(m => !usedIndices.has(m._index));
+    
+    if (unusedMatches.length > 0) {
+      const sendDate = failed.sent_date_parsed;
+      const match = unusedMatches.reduce((best, current) => {
+        if (!best) return current;
+        if (!sendDate || !current.sent_date_parsed) return best;
+        
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed?.getTime() || 0;
+        const currentTime = current.sent_date_parsed.getTime();
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        return currentDiff < bestDiff ? current : best;
+      }, null);
+      
+      if (match) {
+        successful.push({
+          ...failed,
+          Views: match.Views || 0,
+          Clicks: match.Clicks || 0,
+          last_opened: match.last_opened || match.sent_date,
+          _matched_index: match._index,
+          _match_method: 'fuzzy_name',
+          _match_confidence: 0.3,
+        });
+      } else {
+        finalFailed.push(failed);
+      }
+    } else {
+      finalFailed.push(failed);
+    }
+  });
+  
+  return { successful, failed: finalFailed };
+}
+
+/**
+ * Last resort: Match by date proximity only (within 1 hour, no name/subject requirement)
+ * Very low confidence but catches remaining unmatched records
+ */
+function matchByDateProximity(failedRecords, openRows, usedIndices) {
+  const successful = [];
+  const finalFailed = [];
+  
+  // Get unused opens
+  const unusedOpens = openRows
+    .map((open, idx) => ({ ...open, _index: idx }))
+    .filter((open) => !usedIndices.has(open._index) && open.sent_date_parsed);
+  
+  if (unusedOpens.length === 0) {
+    return { successful: [], failed: failedRecords };
+  }
+  
+  failedRecords.forEach((failed) => {
+    const sendDate = failed.sent_date_parsed;
+    if (!sendDate) {
+      finalFailed.push(failed);
+      return;
+    }
+    
+    // Find opens within 1 hour (3600000ms)
+    const nearbyOpens = unusedOpens.filter(open => {
+      if (!open.sent_date_parsed) return false;
+      const timeDiff = Math.abs(open.sent_date_parsed.getTime() - sendDate.getTime());
+      return timeDiff <= 3600000; // 1 hour
+    });
+    
+    if (nearbyOpens.length > 0) {
+      // Find closest by timestamp
+      const closest = nearbyOpens.reduce((best, current) => {
+        if (!best) return current;
+        const sendTime = sendDate.getTime();
+        const bestTime = best.sent_date_parsed.getTime();
+        const currentTime = current.sent_date_parsed.getTime();
+        const bestDiff = Math.abs(bestTime - sendTime);
+        const currentDiff = Math.abs(currentTime - sendTime);
+        return currentDiff < bestDiff ? current : best;
+      }, null);
+      
+      if (closest) {
+        successful.push({
+          ...failed,
+          Views: closest.Views || 0,
+          Clicks: closest.Clicks || 0,
+          last_opened: closest.last_opened || closest.sent_date,
+          _matched_index: closest._index,
+          _match_method: 'date_proximity',
+          _match_confidence: 0.15, // Very low confidence - last resort
+        });
+        usedIndices.add(closest._index);
+      } else {
+        finalFailed.push(failed);
+      }
     } else {
       finalFailed.push(failed);
     }
