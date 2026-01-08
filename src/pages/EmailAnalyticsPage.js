@@ -116,7 +116,7 @@ function EmailAnalyticsPage() {
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [pipelineReportOpen, setPipelineReportOpen] = useState(false);
-  const [matchingMode, setMatchingMode] = useState('relaxed'); // 'email_only', 'timestamp', 'hybrid', 'relaxed', 'name_timestamp'
+  const [matchingMode, setMatchingMode] = useState('composite'); // 'email_only', 'timestamp', 'hybrid', 'relaxed', 'name_timestamp', 'composite'
   const [filters, setFilters] = useState({
     search: "",
     metric: "Views",
@@ -133,6 +133,7 @@ function EmailAnalyticsPage() {
   const [companyMatrixOpen, setCompanyMatrixOpen] = useState(false);
   const [prospectsMatrixOpen, setProspectsMatrixOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("section-overview");
+  const [kpiInfoOpen, setKpiInfoOpen] = useState({ sendOpen: false, trackingData: false, contactMatch: false });
 
   const hasResults = Boolean(emailData.stats);
   const readySdrs = sdrs.every((sdr) => sdr.sendFile && sdr.openFile);
@@ -251,6 +252,9 @@ function EmailAnalyticsPage() {
 
     return data;
   }, [emailData.successful, emailData.failed, filters.sdrFilter, filters.dateRange]);
+
+  // Count of send records after excluding @loopwork.co (from stats)
+  const sendRecordsAfterLoopworkFilter = emailData.stats?.total_send_records_excluding_loopwork || 0;
 
   // Helper to derive normalized company key from a row (must mirror buildCompanyEngagement logic)
   function getCompanyNormalizedKey(row) {
@@ -941,22 +945,37 @@ function EmailAnalyticsPage() {
                   Email Analytics
                 </Typography>
                 <Typography
-                  variant="h4"
+                  variant="h5"
                   gutterBottom
-                  sx={{ fontWeight: 800, color: "white", mb: 0.5 }}
+                  sx={{ 
+                    fontWeight: 800, 
+                    color: "white", 
+                    mb: 0.5, 
+                    fontSize: { xs: "1.25rem", sm: "1.5rem" },
+                    whiteSpace: "nowrap"
+                  }}
                 >
                   📊 Email Analytics Dashboard
                 </Typography>
               </Box>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+              <Stack 
+                direction={{ xs: "column", sm: "row" }} 
+                spacing={1.5} 
+                sx={{ 
+                  width: "100%",
+                  justifyContent: { xs: "flex-start", sm: "flex-end" },
+                  alignItems: { xs: "stretch", sm: "center" }
+                }}
+              >
                 {/* Matching Mode Selector */}
                 <FormControl
-                  fullWidth
                   size="small"
                   sx={{
                     bgcolor: "rgba(255, 255, 255, 0.1)",
                     borderRadius: 2,
                     mb: 2,
+                    minWidth: { xs: "100%", sm: 280 },
+                    maxWidth: { xs: "100%", sm: 320 },
                   }}
                 >
                   <InputLabel
@@ -984,6 +1003,22 @@ function EmailAnalyticsPage() {
                       },
                       "& .MuiSvgIcon-root": {
                         color: "rgba(241, 250, 238, 0.7)",
+                      },
+                      "& .MuiSelect-select": {
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      },
+                    }}
+                    MenuProps={{
+                      PaperProps: {
+                        sx: {
+                          maxHeight: 400,
+                          "& .MuiMenuItem-root": {
+                            whiteSpace: "normal",
+                            fontSize: "0.875rem",
+                          },
+                        },
                       },
                     }}
                   >
@@ -1020,6 +1055,7 @@ function EmailAnalyticsPage() {
                     py: 1,
                     px: 3,
                     borderRadius: 999,
+                    whiteSpace: "nowrap",
                     boxShadow: "0 3px 12px rgba(230, 57, 70, 0.35)",
                     "&:hover": {
                       bgcolor: "#d62839",
@@ -1030,29 +1066,6 @@ function EmailAnalyticsPage() {
                   }}
                 >
                   Upload Data
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="medium"
-                  onClick={handleLoadDemo}
-                  sx={{
-                    borderColor: "rgba(241, 250, 238, 0.85)",
-                    color: "rgba(241, 250, 238, 0.95)",
-                    fontWeight: 600,
-                    py: 1,
-                    px: 2.5,
-                    borderRadius: 999,
-                    borderWidth: 1.5,
-                    "&:hover": {
-                      borderWidth: 1.5,
-                      borderColor: "#f1faee",
-                      bgcolor: "rgba(241, 250, 238, 0.1)",
-                      transform: "translateY(-1px)",
-                    },
-                    transition: "all 0.25s",
-                  }}
-                >
-                  🎯 Demo Data
                 </Button>
               </Stack>
             </Stack>
@@ -1491,7 +1504,7 @@ function EmailAnalyticsPage() {
                         After Loopwork Filter
                       </Typography>
                       <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
-                        {filteredSendOpen?.length?.toLocaleString() || "N/A"}
+                        {sendRecordsAfterLoopworkFilter.toLocaleString() || "N/A"}
                       </Typography>
                     </Grid>
                     <Grid item xs={12} sm={6} md={3}>
@@ -1527,9 +1540,31 @@ function EmailAnalyticsPage() {
                   <Box sx={{ mb: 3, p: 2, bgcolor: "#f0f4ff", borderRadius: 2, border: "2px solid #667eea" }}>
                     <Grid container spacing={2}>
                       <Grid item xs={12} md={4}>
-                        <Typography variant="body2" sx={{ color: "text.secondary", mb: 0.5 }}>
-                          📊 Send-Open Match Rate
-                        </Typography>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
+                          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                            📊 Send-Open Match Rate
+                          </Typography>
+                          <Tooltip title="View detailed matching data">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, sendOpen: true })}
+                              sx={{ 
+                                p: 0.5, 
+                                color: "#667eea",
+                                bgcolor: "rgba(102, 126, 234, 0.08)",
+                                border: "1px solid rgba(102, 126, 234, 0.2)",
+                                "&:hover": { 
+                                  bgcolor: "rgba(102, 126, 234, 0.15)",
+                                  border: "1px solid rgba(102, 126, 234, 0.4)",
+                                  transform: "scale(1.1)"
+                                },
+                                transition: "all 0.2s"
+                              }}
+                            >
+                              <InfoOutlined sx={{ fontSize: 18, fontWeight: 600 }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
                         <Typography variant="h4" sx={{ fontWeight: 700, color: "#667eea" }}>
                           {emailData.stats?.send_open_match_rate?.toFixed(1) || "N/A"}%
                         </Typography>
@@ -1538,9 +1573,31 @@ function EmailAnalyticsPage() {
                         </Typography>
                       </Grid>
                       <Grid item xs={12} md={4}>
-                        <Typography variant="body2" sx={{ color: "text.secondary", mb: 0.5 }}>
-                          📈 Opens with Tracking Data
-                        </Typography>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
+                          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                            📈 Opens with Tracking Data
+                          </Typography>
+                          <Tooltip title="View records with tracking data">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, trackingData: true })}
+                              sx={{ 
+                                p: 0.5, 
+                                color: "#4CAF50",
+                                bgcolor: "rgba(76, 175, 80, 0.08)",
+                                border: "1px solid rgba(76, 175, 80, 0.2)",
+                                "&:hover": { 
+                                  bgcolor: "rgba(76, 175, 80, 0.15)",
+                                  border: "1px solid rgba(76, 175, 80, 0.4)",
+                                  transform: "scale(1.1)"
+                                },
+                                transition: "all 0.2s"
+                              }}
+                            >
+                              <InfoOutlined sx={{ fontSize: 18, fontWeight: 600 }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
                         <Typography variant="h4" sx={{ fontWeight: 700, color: "#4CAF50" }}>
                           {emailData.stats?.opens_data_match_rate?.toFixed(1) || "N/A"}%
                         </Typography>
@@ -1549,9 +1606,31 @@ function EmailAnalyticsPage() {
                         </Typography>
                       </Grid>
                       <Grid item xs={12} md={4}>
-                        <Typography variant="body2" sx={{ color: "text.secondary", mb: 0.5 }}>
-                          🎯 Contact Match Rate
-                        </Typography>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mb: 0.5 }}>
+                          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                            🎯 Contact Match Rate
+                          </Typography>
+                          <Tooltip title="View contact matching data">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, contactMatch: true })}
+                              sx={{ 
+                                p: 0.5, 
+                                color: "#e63946",
+                                bgcolor: "rgba(230, 57, 70, 0.08)",
+                                border: "1px solid rgba(230, 57, 70, 0.2)",
+                                "&:hover": { 
+                                  bgcolor: "rgba(230, 57, 70, 0.15)",
+                                  border: "1px solid rgba(230, 57, 70, 0.4)",
+                                  transform: "scale(1.1)"
+                                },
+                                transition: "all 0.2s"
+                              }}
+                            >
+                              <InfoOutlined sx={{ fontSize: 18, fontWeight: 600 }} />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
                         <Typography variant="h4" sx={{ fontWeight: 700, color: "#e63946" }}>
                           {typeof emailData.stats?.contact_match_rate === 'number' 
                             ? emailData.stats.contact_match_rate.toFixed(1)
@@ -1571,28 +1650,6 @@ function EmailAnalyticsPage() {
                       </Typography>
                       <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
                         {emailData.stats?.total_open_records?.toLocaleString() || "N/A"}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={4}>
-                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                        Opens with Emails
-                      </Typography>
-                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#4CAF50" }}>
-                        {emailData.stats?.opens_with_emails?.toLocaleString() || "N/A"}
-                        {emailData.stats?.opens_with_emails && emailData.stats?.total_open_records
-                          ? ` (${((emailData.stats.opens_with_emails / emailData.stats.total_open_records) * 100).toFixed(1)}%)`
-                          : ""}
-                      </Typography>
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={4}>
-                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                        Opens with Names Only
-                      </Typography>
-                      <Typography variant="h5" sx={{ fontWeight: 700, color: "#ff9800" }}>
-                        {emailData.stats?.opens_without_emails?.toLocaleString() || "N/A"}
-                        {emailData.stats?.opens_without_emails && emailData.stats?.total_open_records
-                          ? ` (${((emailData.stats.opens_without_emails / emailData.stats.total_open_records) * 100).toFixed(1)}%)`
-                          : ""}
                       </Typography>
                     </Grid>
                     <Grid item xs={12} sm={6} md={4}>
@@ -1834,6 +1891,144 @@ function EmailAnalyticsPage() {
           </DialogActions>
         </Dialog>
 
+        {/* KPI Info Dialogs */}
+        {/* Send-Open Match Rate Info */}
+        <Dialog
+          open={kpiInfoOpen.sendOpen}
+          onClose={() => setKpiInfoOpen({ ...kpiInfoOpen, sendOpen: false })}
+          maxWidth="lg"
+          fullWidth
+        >
+          <DialogTitle sx={{ bgcolor: "#667eea", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Email /> Send-Open Match Rate Details
+            </Box>
+            <IconButton onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, sendOpen: false })} sx={{ color: "white" }}>
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent sx={{ p: 3 }}>
+            <Box sx={{ mb: 2, p: 2, bgcolor: "#f5f5f5", borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: "#667eea" }}>
+                Total Send-Open Matched Records: {emailData.stats?.send_open_success?.toLocaleString() || 0}
+              </Typography>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                Filtered Records (after SDR/Date filters): {(filteredSendOpen || []).length.toLocaleString()}
+              </Typography>
+            </Box>
+            <DataTable
+              columns={[
+                { key: "sent_date", label: "Send Date" },
+                { key: "recipient_name", label: "Recipient Name" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "Subject", label: "Subject" },
+                { key: "SDR_Name", label: "SDR" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+                { key: "last_opened", label: "Last Opened" },
+              ]}
+              rows={filteredSendOpen || []}
+              maxHeight={500}
+              emptyMessage="No matched records found."
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, sendOpen: false })}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Opens with Tracking Data Info */}
+        <Dialog
+          open={kpiInfoOpen.trackingData}
+          onClose={() => setKpiInfoOpen({ ...kpiInfoOpen, trackingData: false })}
+          maxWidth="lg"
+          fullWidth
+        >
+          <DialogTitle sx={{ bgcolor: "#4CAF50", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Visibility /> Opens with Tracking Data Details
+            </Box>
+            <IconButton onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, trackingData: false })} sx={{ color: "white" }}>
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent sx={{ p: 3 }}>
+            <Box sx={{ mb: 2, p: 2, bgcolor: "#f5f5f5", borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: "#4CAF50" }}>
+                Total Records with Tracking Data: {emailData.stats?.opens_with_tracking_data?.toLocaleString() || 0}
+              </Typography>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                Filtered Records (after SDR/Date filters): {(filteredSendOpen || []).filter(r => r.Views != null && r.Views !== '').length.toLocaleString()}
+              </Typography>
+            </Box>
+            <DataTable
+              columns={[
+                { key: "sent_date", label: "Send Date" },
+                { key: "recipient_name", label: "Recipient Name" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "Subject", label: "Subject" },
+                { key: "SDR_Name", label: "SDR" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+                { key: "last_opened", label: "Last Opened" },
+              ]}
+              rows={(filteredSendOpen || []).filter(r => r.Views != null && r.Views !== '')}
+              maxHeight={500}
+              emptyMessage="No records with tracking data found."
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, trackingData: false })}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Contact Match Rate Info */}
+        <Dialog
+          open={kpiInfoOpen.contactMatch}
+          onClose={() => setKpiInfoOpen({ ...kpiInfoOpen, contactMatch: false })}
+          maxWidth="lg"
+          fullWidth
+        >
+          <DialogTitle sx={{ bgcolor: "#e63946", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Business /> Contact Match Rate Details
+            </Box>
+            <IconButton onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, contactMatch: false })} sx={{ color: "white" }}>
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent sx={{ p: 3 }}>
+            <Box sx={{ mb: 2, p: 2, bgcolor: "#f5f5f5", borderRadius: 1 }}>
+              <Typography variant="body2" sx={{ mb: 1, fontWeight: 600, color: "#e63946" }}>
+                Total Contact-Matched Records: {emailData.stats?.contact_join_success?.toLocaleString() || 0}
+              </Typography>
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                Filtered Records (after SDR/Date filters): {(filteredForAnalysis || []).length.toLocaleString()}
+              </Typography>
+            </Box>
+            <DataTable
+              columns={[
+                { key: "sent_date", label: "Send Date" },
+                { key: "recipient_name", label: "Recipient Name" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "Company Name", label: "Company" },
+                { key: "First Name", label: "First Name" },
+                { key: "Last Name", label: "Last Name" },
+                { key: "Title", label: "Title" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+                { key: "SDR_Name", label: "SDR" },
+              ]}
+              rows={filteredForAnalysis || []}
+              maxHeight={500}
+              emptyMessage="No contact-matched records found."
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setKpiInfoOpen({ ...kpiInfoOpen, contactMatch: false })}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
         {/* Upload Data Modal */}
         <Dialog
           open={modalOpen}
@@ -1875,71 +2070,6 @@ function EmailAnalyticsPage() {
           </DialogTitle>
           <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
             <Stack spacing={2.5} sx={{ mt: 2 }}>
-            <Card
-              elevation={3}
-              sx={{
-                borderRadius: 3,
-                border: "2px solid #457b9d",
-                overflow: "hidden",
-                background: "linear-gradient(135deg, #FFFFFF 0%, #f1faee 100%)",
-              }}
-            >
-              <Box
-                sx={{
-                  bgcolor: "#000000",
-                  p: 2,
-                  color: "white",
-                }}
-              >
-                <Typography variant="h6" sx={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 1 }}>
-                  📂 Data Source
-                </Typography>
-              </Box>
-              <CardContent sx={{ p: 2.5 }}>
-                <ToggleButtonGroup
-                  fullWidth
-                  size="medium"
-                  color="primary"
-                  value={mode}
-                  exclusive
-                  onChange={(_, value) => value && setMode(value)}
-                  sx={{
-                    "& .MuiToggleButton-root": {
-                      fontWeight: 600,
-                      py: 1.5,
-                      "&.Mui-selected": {
-                        bgcolor: "#000000",
-                        color: "white",
-                        "&:hover": {
-                          bgcolor: "#000000",
-                        },
-                      },
-                    },
-                  }}
-                >
-                  <ToggleButton value="upload">📤 Upload SDR Files</ToggleButton>
-                  <ToggleButton value="demo">🎯 Pre-processed Demo</ToggleButton>
-                </ToggleButtonGroup>
-                {mode === "demo" && (
-                  <Alert
-                    severity="info"
-                    sx={{
-                      mt: 2,
-                      borderRadius: 2,
-                      "& .MuiAlert-icon": {
-                        fontSize: 24,
-                      },
-                    }}
-                  >
-                    Demo data loaded. Switch back to &quot;Upload SDR Files&quot;
-                    to process your own CSVs.
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-
-            {mode === "upload" && (
-              <>
                 <Card
                   elevation={2}
                   sx={{
@@ -2100,8 +2230,6 @@ function EmailAnalyticsPage() {
                     </Stack>
                   </CardContent>
                 </Card>
-              </>
-            )}
             </Stack>
           </DialogContent>
           <DialogActions

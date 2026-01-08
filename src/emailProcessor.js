@@ -125,7 +125,8 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
   const allSendOpenSuccess = [];
   const allSendOpenFailures = [];
   const sdrStats = [];
-  let totalSendRecords = 0;
+  let totalSendRecordsRaw = 0; // Total from raw CSV before any filtering
+  let totalSendRecords = 0; // After normalizeSend filtering (excludes loopwork.co)
   let totalOpenRecords = 0;
   const aggregatedStrategyMatches = {
     email: 0,
@@ -148,6 +149,9 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
       loadCsv(config.openCsv),
     ]);
 
+    // Count raw send records (total from CSV before any filtering)
+    totalSendRecordsRaw += sendRows.length;
+
     const sendNorm = normalizeSend(sendRows);
     const openNorm = normalizeOpen(openRows);
 
@@ -162,7 +166,7 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
       `${label} Open CSV`
     );
 
-    totalSendRecords += sendNorm.length;
+    totalSendRecords += sendNorm.length; // After normalizeSend (excludes loopwork.co)
     totalOpenRecords += openNorm.length;
 
     sendNorm.forEach(
@@ -234,7 +238,8 @@ export async function processMultiSdrPipeline(sdrConfigs, contactsCsv, options =
     : 0;
 
   const stats = {
-    total_send_records: totalSendRecords,
+    total_send_records: totalSendRecordsRaw, // Total from raw CSV
+    total_send_records_excluding_loopwork: totalSendRecords, // After normalizeSend (excludes loopwork.co)
     total_open_records: totalOpenRecords,
     total_contact_records: contactsNorm.length,
     send_open_success: allSendOpenSuccess.length,
