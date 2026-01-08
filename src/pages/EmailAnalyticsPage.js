@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  Divider,
   Fade,
   FormControl,
   Grid,
@@ -56,6 +57,8 @@ import {
   Warning as WarningIcon,
   InfoOutlined,
   Leaderboard,
+  AccountCircle,
+  CloudDownload,
 } from "@mui/icons-material";
 import { startOfWeek, startOfMonth, format, eachWeekOfInterval, eachMonthOfInterval, isWithinInterval } from "date-fns";
 import Plot from "react-plotly.js";
@@ -63,6 +66,7 @@ import UploadCard from "../components/UploadCard";
 import KpiCard from "../components/KpiCard";
 import DataTable from "../components/DataTable";
 import SdrCard from "../components/SdrCard";
+import GmailIntegration from "../components/GmailIntegration";
 import { processMultiSdrPipeline } from "../emailProcessor";
 import { useDataContext } from "../context/DataContext";
 import {
@@ -185,6 +189,18 @@ function EmailAnalyticsPage() {
       window.removeEventListener("scroll", handleScroll);
     };
   }, []);
+
+  // Handle Gmail data fetched callback
+  const handleGmailDataFetched = (file) => {
+    // Auto-populate the first SDR's send file
+    if (sdrs.length > 0) {
+      setSdrs((prev) => {
+        const updated = [...prev];
+        updated[0] = { ...updated[0], sendFile: file };
+        return updated;
+      });
+    }
+  };
 
 
   const filteredForAnalysis = useMemo(() => {
@@ -2070,6 +2086,16 @@ function EmailAnalyticsPage() {
           </DialogTitle>
           <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
             <Stack spacing={2.5} sx={{ mt: 2 }}>
+              {/* Gmail Integration Component */}
+              <GmailIntegration
+                onDataFetched={handleGmailDataFetched}
+                dateRange={filters.dateRange}
+              />
+
+              <Divider sx={{ my: 1 }}>
+                <Chip label="OR" size="small" />
+              </Divider>
+
                 <Card
                   elevation={2}
                   sx={{
