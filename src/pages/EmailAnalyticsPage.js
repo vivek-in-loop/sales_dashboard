@@ -749,8 +749,8 @@ function EmailAnalyticsPage() {
   );
 
   const sdrMatrix = useMemo(
-    () => buildSdrMatrix(emailData.successful),
-    [emailData.successful]
+    () => buildSdrMatrix(filteredSendOpen),
+    [filteredSendOpen]
   );
 
   const handleProcess = async () => {
@@ -2884,7 +2884,7 @@ function EmailAnalyticsPage() {
                                         mb: 2,
                                       }}
                                     />
-                                    <Grid container spacing={2} sx={{ mt: 1 }}>
+                                    <Grid container spacing={1.5} sx={{ mt: 1 }}>
                                       <Grid item xs={6}>
                                         <Box
                                           sx={{
@@ -2895,12 +2895,52 @@ function EmailAnalyticsPage() {
                                           }}
                                         >
                                           <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <Visibility sx={{ fontSize: 16, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600 }}>
+                                            <Email sx={{ fontSize: 14, color: theme.icon }} />
+                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
+                                              Sends
+                                            </Typography>
+                                          </Stack>
+                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                                            {sdr.sends.toLocaleString()}
+                                          </Typography>
+                                        </Box>
+                                      </Grid>
+                                      <Grid item xs={6}>
+                                        <Box
+                                          sx={{
+                                            bgcolor: "rgba(255,255,255,0.7)",
+                                            borderRadius: 2,
+                                            p: 1.5,
+                                            border: "1px solid rgba(0,0,0,0.08)",
+                                          }}
+                                        >
+                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
+                                            <AccountCircle sx={{ fontSize: 14, color: theme.icon }} />
+                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
+                                              Prospects
+                                            </Typography>
+                                          </Stack>
+                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                                            {sdr.totalProspects?.toLocaleString() || "0"}
+                                          </Typography>
+                                        </Box>
+                                      </Grid>
+                                      <Grid item xs={6}>
+                                        <Box
+                                          sx={{
+                                            bgcolor: "rgba(255,255,255,0.7)",
+                                            borderRadius: 2,
+                                            p: 1.5,
+                                            border: "1px solid rgba(0,0,0,0.08)",
+                                          }}
+                                        >
+                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
+                                            <Visibility sx={{ fontSize: 14, color: theme.icon }} />
+                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
                                               Views
                                             </Typography>
                                           </Stack>
-                                          <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
                                             {sdr.views.toLocaleString()}
                                           </Typography>
                                         </Box>
@@ -2915,24 +2955,62 @@ function EmailAnalyticsPage() {
                                           }}
                                         >
                                           <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <TouchApp sx={{ fontSize: 16, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600 }}>
+                                            <TouchApp sx={{ fontSize: 14, color: theme.icon }} />
+                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
                                               Clicks
                                             </Typography>
                                           </Stack>
-                                          <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000" }}>
+                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
                                             {sdr.clicks.toLocaleString()}
                                           </Typography>
                                         </Box>
                                       </Grid>
+                                      <Grid item xs={6}>
+                                        <Box
+                                          sx={{
+                                            bgcolor: "rgba(255,255,255,0.7)",
+                                            borderRadius: 2,
+                                            p: 1.5,
+                                            border: "1px solid rgba(0,0,0,0.08)",
+                                          }}
+                                        >
+                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
+                                            <TrendingUp sx={{ fontSize: 14, color: theme.icon }} />
+                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
+                                              High Eng.
+                                            </Typography>
+                                          </Stack>
+                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                                            {sdr.highEngagement}
+                                          </Typography>
+                                        </Box>
+                                      </Grid>
                                     </Grid>
+                                    <Box sx={{ mt: 2, p: 1.5, bgcolor: "rgba(255,255,255,0.7)", borderRadius: 2, border: "1px solid rgba(0,0,0,0.08)" }}>
+                                      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} mb={1}>
+                                        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
+                                          Open Rate
+                                        </Typography>
+                                        <Typography variant="body2" sx={{ color: theme.icon, fontWeight: 700 }}>
+                                          {(sdr.openRate || sdr.engagementRate).toFixed(1)}%
+                                        </Typography>
+                                      </Stack>
+                                      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                                        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
+                                          Prospect Opened %
+                                        </Typography>
+                                        <Typography variant="body2" sx={{ color: theme.icon, fontWeight: 700 }}>
+                                          {(sdr.prospectOpenedRate || 0).toFixed(1)}%
+                                        </Typography>
+                                      </Stack>
+                                    </Box>
                                     <Box sx={{ mt: 2 }}>
                                       <Typography variant="caption" sx={{ color: "text.secondary", mb: 0.5, display: "block", fontWeight: 600 }}>
-                                        Engagement Rate
+                                        Open Rate
                                       </Typography>
                                       <LinearProgress
                                         variant="determinate"
-                                        value={Math.min(sdr.engagementRate, 100)}
+                                        value={Math.min(sdr.openRate || sdr.engagementRate, 100)}
                                         sx={{
                                           height: 10,
                                           borderRadius: 5,
@@ -2946,7 +3024,7 @@ function EmailAnalyticsPage() {
                                         }}
                                       />
                                       <Typography variant="body2" sx={{ color: theme.icon, mt: 0.5, fontWeight: 700 }}>
-                                        {sdr.engagementRate.toFixed(1)}%
+                                        {(sdr.openRate || sdr.engagementRate).toFixed(1)}%
                                       </Typography>
                                     </Box>
                                   </CardContent>
@@ -2997,6 +3075,18 @@ function EmailAnalyticsPage() {
                               <TableCell sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>SDR Name</TableCell>
                               <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
                                 <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
+                                  <Email fontSize="small" />
+                                  Sends
+                                </Stack>
+                              </TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
+                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
+                                  <AccountCircle fontSize="small" />
+                                  Prospects
+                                </Stack>
+                              </TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
+                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
                                   <Visibility fontSize="small" />
                                   Views
                                 </Stack>
@@ -3008,7 +3098,13 @@ function EmailAnalyticsPage() {
                                 </Stack>
                               </TableCell>
                               <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                Engagement Rate
+                                Open Rate
+                              </TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
+                                Prospect Opened %
+                              </TableCell>
+                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
+                                High Engagement
                               </TableCell>
                               <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
                                 Performance Score
@@ -3092,6 +3188,32 @@ function EmailAnalyticsPage() {
                                   </TableCell>
                                   <TableCell align="right" sx={{ py: 2 }}>
                                     <Chip
+                                      icon={<Email sx={{ fontSize: 16 }} />}
+                                      label={sdr.sends.toLocaleString()}
+                                      size="small"
+                                      sx={{
+                                        bgcolor: "#F5F5F5",
+                                        color: "#000000",
+                                        fontWeight: 600,
+                                        fontSize: "0.8rem",
+                                      }}
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ py: 2 }}>
+                                    <Chip
+                                      icon={<AccountCircle sx={{ fontSize: 16 }} />}
+                                      label={sdr.totalProspects?.toLocaleString() || "0"}
+                                      size="small"
+                                      sx={{
+                                        bgcolor: "#E8F5E9",
+                                        color: "#000000",
+                                        fontWeight: 600,
+                                        fontSize: "0.8rem",
+                                      }}
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ py: 2 }}>
+                                    <Chip
                                       icon={<Visibility sx={{ fontSize: 16 }} />}
                                       label={sdr.views.toLocaleString()}
                                       size="small"
@@ -3117,32 +3239,78 @@ function EmailAnalyticsPage() {
                                     />
                                   </TableCell>
                                   <TableCell align="right" sx={{ py: 2 }}>
-                                    <Box sx={{ minWidth: 140 }}>
+                                    <Box sx={{ minWidth: 120 }}>
                                       <Stack direction="row" alignItems="center" spacing={1} justifyContent="flex-end">
                                         <Box sx={{ flexGrow: 1 }}>
                                           <LinearProgress
                                             variant="determinate"
-                                            value={Math.min(sdr.engagementRate, 100)}
+                                            value={Math.min(sdr.openRate || sdr.engagementRate, 100)}
                                             sx={{
-                                              height: 10,
-                                              borderRadius: 5,
+                                              height: 8,
+                                              borderRadius: 4,
                                               bgcolor: "#E0E0E0",
-                                              boxShadow: "inset 0 1px 3px rgba(0,0,0,0.1)",
                                               "& .MuiLinearProgress-bar": {
                                                 bgcolor: rank === 1 ? "#FFD700" : rank === 2 ? "#C0C0C0" : rank === 3 ? "#CD7F32" : "#4CAF50",
-                                                borderRadius: 5,
+                                                borderRadius: 4,
                                               },
                                             }}
                                           />
                                         </Box>
                                         <Typography
                                           variant="body2"
-                                          sx={{ color: "text.primary", fontWeight: 700, fontSize: "0.85rem", minWidth: 45 }}
+                                          sx={{ color: "text.primary", fontWeight: 700, fontSize: "0.8rem", minWidth: 40 }}
                                         >
-                                          {sdr.engagementRate.toFixed(1)}%
+                                          {(sdr.openRate || sdr.engagementRate).toFixed(1)}%
                                         </Typography>
                                       </Stack>
                                     </Box>
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ py: 2 }}>
+                                    <Box sx={{ minWidth: 120 }}>
+                                      <Stack direction="row" alignItems="center" spacing={1} justifyContent="flex-end">
+                                        <Box sx={{ flexGrow: 1 }}>
+                                          <LinearProgress
+                                            variant="determinate"
+                                            value={Math.min(sdr.prospectOpenedRate || 0, 100)}
+                                            sx={{
+                                              height: 8,
+                                              borderRadius: 4,
+                                              bgcolor: "#E0E0E0",
+                                              "& .MuiLinearProgress-bar": {
+                                                bgcolor: rank === 1 ? "#FFD700" : rank === 2 ? "#C0C0C0" : rank === 3 ? "#CD7F32" : "#9C27B0",
+                                                borderRadius: 4,
+                                              },
+                                            }}
+                                          />
+                                        </Box>
+                                        <Typography
+                                          variant="body2"
+                                          sx={{ color: "text.primary", fontWeight: 700, fontSize: "0.8rem", minWidth: 40 }}
+                                        >
+                                          {(sdr.prospectOpenedRate || 0).toFixed(1)}%
+                                        </Typography>
+                                      </Stack>
+                                    </Box>
+                                  </TableCell>
+                                  <TableCell align="right" sx={{ py: 2 }}>
+                                    <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+                                      <Chip
+                                        label={`${sdr.highEngagement}`}
+                                        size="small"
+                                        sx={{
+                                          bgcolor: "#FFF3E0",
+                                          color: "#E65100",
+                                          fontWeight: 600,
+                                          fontSize: "0.75rem",
+                                        }}
+                                      />
+                                      <Typography
+                                        variant="caption"
+                                        sx={{ color: "text.secondary", fontSize: "0.75rem" }}
+                                      >
+                                        ({sdr.highEngagementRate.toFixed(1)}%)
+                                      </Typography>
+                                    </Stack>
                                   </TableCell>
                                   <TableCell align="right" sx={{ py: 2 }}>
                                     <Chip
@@ -4457,6 +4625,13 @@ function buildTrend(rows, metricKey, timePeriod = "day", dateRange = null) {
 }
 
 function buildSdrMatrix(rows) {
+  // Robust numeric conversion matching main KPIs calculation
+  const parseNum = (val) => {
+    if (val == null || val === '') return 0;
+    const num = Number(val);
+    return isNaN(num) ? 0 : num;
+  };
+
   const map = new Map();
   rows.forEach((row) => {
     const key = row.SDR_Name || row["Account Owner"] || "Unassigned";
@@ -4467,34 +4642,87 @@ function buildSdrMatrix(rows) {
         views: 0,
         clicks: 0,
         highEngagement: 0,
+        recordsWithOpens: 0, // Count records with non-NULL Views (matching main KPIs)
+        prospects: new Set(), // Track unique recipient emails (matching main KPIs)
+        openedProspects: new Set(), // Track unique prospects with non-null Views (for prospect opened rate)
         totalRecords: 0,
       });
     }
     const agg = map.get(key);
     agg.sends += 1;
     agg.totalRecords += 1;
-    agg.views += Number(row.Views) || 0;
-    agg.clicks += Number(row.Clicks) || 0;
-    if (Number(row.Views) >= 5) {
+    
+    // Track unique prospects (matching main KPIs: unique Recipient Emails)
+    const email = row["Recipient Email"] || row.recipient_email || row.Email || row.email;
+    if (email) {
+      const emailLower = email.toLowerCase().trim();
+      agg.prospects.add(emailLower);
+      
+      // Track opened prospects: unique prospects with non-null Views (matching main KPIs)
+      if (row.Views != null && row.Views !== '') {
+        agg.openedProspects.add(emailLower);
+      }
+    }
+    
+    // Calculate Views: Sum of all views (matching main KPIs calculation)
+    const views = parseNum(row.Views);
+    agg.views += views;
+    
+    // Calculate Clicks: Sum of all clicks using robust calculation (matching main KPIs)
+    const clicks = parseNum(row.Clicks);
+    agg.clicks += clicks;
+    
+    // Count records with non-NULL Views (for open rate calculation matching main KPIs)
+    if (row.Views != null && row.Views !== '') {
+      agg.recordsWithOpens += 1;
+    }
+    
+    // High engagement: Views >= 5
+    if (views >= 5) {
       agg.highEngagement += 1;
     }
   });
 
   const results = [...map.values()].map((item) => {
-    const engagementRate = item.sends > 0 ? (item.views / item.sends) * 100 : 0;
-    const clickRate = item.views > 0 ? (item.clicks / item.views) * 100 : 0;
-    const highEngagementRate = item.sends > 0 ? (item.highEngagement / item.sends) * 100 : 0;
+    // Total Prospects: Unique recipient emails (matching main KPIs)
+    const totalProspects = item.prospects.size;
+    
+    // Opened Prospects: Unique prospects with non-null Views (matching main KPIs)
+    const openedProspects = item.openedProspects.size;
+    
+    // Open Rate: (records with non-NULL Views / total_sends) * 100 (matching main KPIs)
+    const openRate = item.sends > 0 
+      ? (item.recordsWithOpens / item.sends) * 100 
+      : 0;
+    
+    // Prospect Opened Rate: (opened_prospect_count / total_prospect_count) * 100 (matching main KPIs)
+    const prospectOpenedRate = totalProspects > 0
+      ? (openedProspects / totalProspects) * 100
+      : 0;
+    
+    // Click Rate: (Clicks / Views) * 100 (matching main KPIs matrix)
+    const clickRate = item.views > 0 
+      ? (item.clicks / item.views) * 100 
+      : 0;
+    
+    const highEngagementRate = item.sends > 0 
+      ? (item.highEngagement / item.sends) * 100 
+      : 0;
     
     // Calculate score for ranking (weighted combination)
     const score = 
       item.views * 0.4 + 
       item.clicks * 0.3 + 
       item.highEngagement * 0.2 + 
-      engagementRate * 0.1;
+      openRate * 0.1;
 
     return {
       ...item,
-      engagementRate,
+      totalProspects, // Add total prospects
+      openedProspects, // Add opened prospects count
+      engagementRate: openRate, // Renamed for consistency with display
+      openRate, // Add explicit openRate field
+      prospectOpenedRate, // Add prospect opened rate
       clickRate,
       highEngagementRate,
       score,
