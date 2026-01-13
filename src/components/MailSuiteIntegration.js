@@ -25,24 +25,19 @@ import {
   AccountCircle,
   CloudDownload,
   Download as DownloadIcon,
+  Visibility,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
 } from "@mui/icons-material";
 import Papa from "papaparse";
-import {
-  initGmailAPI,
-  isSignedIn,
-  signIn,
-  signOut,
-  getCurrentUserEmail,
-  fetchGmailDataAsCSV,
-} from "../utils/gmailApi";
+import { fetchMailSuiteDataAsCSV } from "../utils/mailSuiteApi";
 
-function GmailIntegration({ onDataFetched, dateRange }) {
-  const [gmailSignedIn, setGmailSignedIn] = useState(false);
-  const [gmailUserEmail, setGmailUserEmail] = useState(null);
-  const [gmailLoading, setGmailLoading] = useState(false);
-  const [gmailFetching, setGmailFetching] = useState(false);
+function MailSuiteIntegration({ onDataFetched, dateRange }) {
+  const [mailSuiteUsername, setMailSuiteUsername] = useState("");
+  const [mailSuitePassword, setMailSuitePassword] = useState("");
+  const [mailSuiteAuthenticated, setMailSuiteAuthenticated] = useState(false);
+  const [mailSuiteLoading, setMailSuiteLoading] = useState(false);
+  const [mailSuiteFetching, setMailSuiteFetching] = useState(false);
   const [fetchedCsvData, setFetchedCsvData] = useState(null);
   const [tableData, setTableData] = useState([]);
   const [tableHeaders, setTableHeaders] = useState([]);
@@ -70,110 +65,56 @@ function GmailIntegration({ onDataFetched, dateRange }) {
     return new Date();
   });
 
-  // Check shared sign-in state periodically
-  useEffect(() => {
-    const checkSignInStatus = () => {
-      if (isSignedIn()) {
-        setGmailSignedIn(true);
-        setGmailUserEmail(getCurrentUserEmail());
-      } else {
-        setGmailSignedIn(false);
-        setGmailUserEmail(null);
-      }
-    };
+  // Handle MailSuite Pro authentication
+  const handleMailSuiteAuthenticate = async () => {
+    if (!mailSuiteUsername || !mailSuitePassword) {
+      setError("Please enter both username and password");
+      return;
+    }
 
-    // Check immediately
-    checkSignInStatus();
-
-    // Check periodically to sync with other components
-    const interval = setInterval(checkSignInStatus, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // Initialize Gmail API
-  useEffect(() => {
-    const initializeGmail = () => {
-      const apiKey = process.env.REACT_APP_GOOGLE_API_KEY || "";
-
-      if (!apiKey) {
-        console.warn("Google API key not configured. Set REACT_APP_GOOGLE_API_KEY in .env file");
-        return;
-      }
-
-      if (window.gapi) {
-        initGmailAPI(apiKey, () => {
-          if (isSignedIn()) {
-            setGmailSignedIn(true);
-            setGmailUserEmail(getCurrentUserEmail());
-          }
-        });
-      } else {
-        setTimeout(initializeGmail, 500);
-      }
-    };
-
-    const checkLibraries = setInterval(() => {
-      if (window.gapi && window.google && window.google.accounts) {
-        clearInterval(checkLibraries);
-        initializeGmail();
-      }
-    }, 100);
-
-    const timeout = setTimeout(() => {
-      clearInterval(checkLibraries);
-      if (!window.gapi || !window.google) {
-        console.error("Google API libraries failed to load");
-      }
-    }, 10000);
-
-    return () => {
-      clearInterval(checkLibraries);
-      clearTimeout(timeout);
-    };
-  }, []);
-
-  // Handle Gmail sign in
-  const handleGmailSignIn = async () => {
     try {
-      setGmailLoading(true);
+      setMailSuiteLoading(true);
       setError("");
 
-      const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
-      if (!clientId) {
-        setError("Google Client ID not configured. Please set REACT_APP_GOOGLE_CLIENT_ID in .env file");
-        return;
-      }
+      // Test authentication by trying to fetch a small date range
+      // If successful, mark as authenticated
+      const testEndDate = new Date();
+      const testStartDate = new Date();
+      testStartDate.setDate(testStartDate.getDate() - 1);
 
-      if (!window.google || !window.google.accounts) {
-        setError("Google Identity Services not loaded. Please refresh the page.");
-        return;
-      }
+      await fetchMailSuiteDataAsCSV({
+        startDate: testStartDate,
+        endDate: testEndDate,
+        username: mailSuiteUsername,
+        password: mailSuitePassword,
+      });
 
-      await signIn(clientId);
-      // State will be updated by the checkSignInStatus effect
+      // If we get here, authentication was successful
+      setMailSuiteAuthenticated(true);
     } catch (error) {
-      console.error("Gmail sign-in error:", error);
-      setError(`Failed to sign in with Google: ${error.message || "Unknown error"}`);
+      console.error("MailSuite authentication error:", error);
+      setError(error.message || "Authentication failed. Please check your credentials.");
+      setMailSuiteAuthenticated(false);
     } finally {
-      setGmailLoading(false);
+      setMailSuiteLoading(false);
     }
   };
 
-  // Handle Gmail sign out
-  const handleGmailSignOut = () => {
-    signOut();
-    // State will be updated by the checkSignInStatus effect
+  // Handle MailSuite sign out
+  const handleMailSuiteSignOut = () => {
+    setMailSuiteAuthenticated(false);
+    setMailSuitePassword(""); // Clear password for security
     setFetchedCsvData(null);
     setTableData([]);
     setTableHeaders([]);
     setShowTable(false);
+    setError("");
   };
 
-  // Fetch Gmail data and convert to CSV
-  const handleFetchGmailData = async () => {
-    if (!gmailSignedIn) {
-      setError("Please sign in with Google first");
+  // Fetch MailSuite data and convert to CSV
+  const handleFetchMailSuiteData = async () => {
+    if (!mailSuiteAuthenticated || !mailSuiteUsername || !mailSuitePassword) {
+      setError("Please authenticate with MailSuite Pro first");
       return;
     }
 
@@ -189,10 +130,15 @@ function GmailIntegration({ onDataFetched, dateRange }) {
     }
 
     try {
-      setGmailFetching(true);
+      setMailSuiteFetching(true);
       setError("");
 
-      const csvData = await fetchGmailDataAsCSV({ startDate, endDate });
+      const csvData = await fetchMailSuiteDataAsCSV({
+        startDate,
+        endDate,
+        username: mailSuiteUsername,
+        password: mailSuitePassword,
+      });
       setFetchedCsvData(csvData);
 
       // Parse CSV data for table view
@@ -213,17 +159,17 @@ function GmailIntegration({ onDataFetched, dateRange }) {
 
       // Create a File object from the CSV string
       const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-      const file = new File([blob], `gmail-sent-emails-${Date.now()}.csv`, { type: "text/csv" });
+      const file = new File([blob], `mailsuite-opens-${Date.now()}.csv`, { type: "text/csv" });
 
       // Call the callback to notify parent component
       if (onDataFetched) {
         onDataFetched(file);
       }
     } catch (error) {
-      console.error("Error fetching Gmail data:", error);
-      setError(`Failed to fetch Gmail data: ${error.message || "Unknown error"}`);
+      console.error("Error fetching MailSuite data:", error);
+      setError(`Failed to fetch MailSuite data: ${error.message || "Unknown error"}`);
     } finally {
-      setGmailFetching(false);
+      setMailSuiteFetching(false);
     }
   };
 
@@ -235,7 +181,7 @@ function GmailIntegration({ onDataFetched, dateRange }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `gmail-sent-emails-${new Date().toISOString().split("T")[0]}.csv`;
+    link.download = `mailsuite-opens-${new Date().toISOString().split("T")[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -247,23 +193,23 @@ function GmailIntegration({ onDataFetched, dateRange }) {
       elevation={2}
       sx={{
         borderRadius: 3,
-        border: "2px solid #4285F4",
+        border: "2px solid #9C27B0",
         overflow: "hidden",
         bgcolor: "white",
       }}
     >
       <Box
         sx={{
-          bgcolor: "#4285F4",
+          bgcolor: "#9C27B0",
           p: 2,
           color: "white",
         }}
       >
         <Typography variant="h6" sx={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 1 }}>
-          <Email /> Gmail Integration
+          <Visibility /> MailSuite Pro Integration
         </Typography>
         <Typography variant="caption" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
-          Connect your Gmail account to automatically fetch sent emails
+          Authenticate with your MailSuite Pro credentials to fetch tracking data (opens & clicks).
         </Typography>
       </Box>
       <CardContent sx={{ p: 2.5 }}>
@@ -273,31 +219,77 @@ function GmailIntegration({ onDataFetched, dateRange }) {
           </Alert>
         )}
 
-        {!gmailSignedIn ? (
+        {!mailSuiteAuthenticated ? (
           <Stack spacing={2}>
             <Alert severity="info" sx={{ borderRadius: 2 }}>
               <Typography variant="body2">
-                Sign in with Google to fetch your sent emails directly from Gmail. This will automatically populate your Send CSV data.
+                <strong>MailSuite Pro Authentication Required</strong><br />
+                Enter your MailSuite Pro username (email) and password to access tracking data.
+                MailSuite Pro uses its own authentication system, separate from Google OAuth.
               </Typography>
             </Alert>
+            
+            <TextField
+              fullWidth
+              label="MailSuite Pro Username (Email)"
+              type="email"
+              value={mailSuiteUsername}
+              onChange={(e) => {
+                setMailSuiteUsername(e.target.value);
+                setError("");
+              }}
+              placeholder="your-email@example.com"
+              sx={{
+                "& .MuiOutlinedInput-notchedOutline": {
+                  borderColor: "#E0E0E0",
+                },
+                "&:hover .MuiOutlinedInput-notchedOutline": {
+                  borderColor: "#9C27B0",
+                },
+              }}
+            />
+            
+            <TextField
+              fullWidth
+              label="MailSuite Pro Password"
+              type="password"
+              value={mailSuitePassword}
+              onChange={(e) => {
+                setMailSuitePassword(e.target.value);
+                setError("");
+              }}
+              placeholder="Enter your password"
+              sx={{
+                "& .MuiOutlinedInput-notchedOutline": {
+                  borderColor: "#E0E0E0",
+                },
+                "&:hover .MuiOutlinedInput-notchedOutline": {
+                  borderColor: "#9C27B0",
+                },
+              }}
+            />
+            
             <Button
               variant="contained"
               fullWidth
               size="large"
               startIcon={<AccountCircle />}
-              onClick={handleGmailSignIn}
-              disabled={gmailLoading}
+              onClick={handleMailSuiteAuthenticate}
+              disabled={mailSuiteLoading || !mailSuiteUsername || !mailSuitePassword}
               sx={{
-                bgcolor: "#4285F4",
+                bgcolor: "#9C27B0",
                 color: "white",
                 fontWeight: 600,
                 py: 1.5,
                 "&:hover": {
-                  bgcolor: "#357AE8",
+                  bgcolor: "#7B1FA2",
+                },
+                "&:disabled": {
+                  bgcolor: "#cccccc",
                 },
               }}
             >
-              {gmailLoading ? "Signing in..." : "Sign in with Google"}
+              {mailSuiteLoading ? "Authenticating..." : "Authenticate with MailSuite Pro"}
             </Button>
           </Stack>
         ) : (
@@ -313,21 +305,21 @@ function GmailIntegration({ onDataFetched, dateRange }) {
               }}
             >
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                <AccountCircle sx={{ color: "#4285F4", fontSize: 32 }} />
+                <AccountCircle sx={{ color: "#9C27B0", fontSize: 32 }} />
                 <Box>
                   <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                    {gmailUserEmail}
+                    {mailSuiteUsername}
                   </Typography>
                   <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                    Connected to Gmail
+                    Authenticated with MailSuite Pro
                   </Typography>
                 </Box>
               </Box>
               <Button
                 variant="outlined"
                 size="small"
-                onClick={handleGmailSignOut}
-                sx={{ borderColor: "#4285F4", color: "#4285F4" }}
+                onClick={handleMailSuiteSignOut}
+                sx={{ borderColor: "#9C27B0", color: "#9C27B0" }}
               >
                 Sign Out
               </Button>
@@ -364,7 +356,7 @@ function GmailIntegration({ onDataFetched, dateRange }) {
                         borderColor: "#E0E0E0",
                       },
                       "&:hover .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#4285F4",
+                        borderColor: "#9C27B0",
                       },
                     }}
                   />
@@ -387,14 +379,14 @@ function GmailIntegration({ onDataFetched, dateRange }) {
                         borderColor: "#E0E0E0",
                       },
                       "&:hover .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#4285F4",
+                        borderColor: "#9C27B0",
                       },
                     }}
                   />
                 </Grid>
               </Grid>
               <Typography variant="caption" sx={{ color: "text.secondary", mt: 1, display: "block" }}>
-                Emails will be fetched for the selected date range
+                Tracking data (opens & clicks) will be fetched for the selected date range
               </Typography>
             </Box>
 
@@ -403,40 +395,40 @@ function GmailIntegration({ onDataFetched, dateRange }) {
               fullWidth
               size="large"
               startIcon={<CloudDownload />}
-              onClick={handleFetchGmailData}
-              disabled={gmailFetching || !startDate || !endDate}
+              onClick={handleFetchMailSuiteData}
+              disabled={mailSuiteFetching || !startDate || !endDate}
               sx={{
-                bgcolor: "#34A853",
+                bgcolor: "#9C27B0",
                 color: "white",
                 fontWeight: 600,
                 py: 1.5,
                 "&:hover": {
-                  bgcolor: "#2E8B47",
+                  bgcolor: "#7B1FA2",
                 },
                 "&:disabled": {
                   bgcolor: "#cccccc",
                 },
               }}
             >
-              {gmailFetching ? "Fetching emails..." : "Fetch Sent Emails from Gmail"}
+              {mailSuiteFetching ? "Fetching tracking data..." : "Fetch Opens & Clicks from MailSuite"}
             </Button>
 
-            {gmailFetching && <LinearProgress sx={{ mt: 1 }} />}
+            {mailSuiteFetching && <LinearProgress sx={{ mt: 1 }} />}
 
             {fetchedCsvData && (
               <Box
                 sx={{
                   p: 2,
-                  bgcolor: "#e8f5e9",
+                  bgcolor: "#f3e5f5",
                   borderRadius: 2,
-                  border: "1px solid #4CAF50",
+                  border: "1px solid #9C27B0",
                 }}
               >
-                <Typography variant="body2" sx={{ fontWeight: 600, mb: 1, color: "#2E7D32" }}>
-                  ✓ Email data fetched successfully!
+                <Typography variant="body2" sx={{ fontWeight: 600, mb: 1, color: "#7B1FA2" }}>
+                  ✓ Tracking data fetched successfully!
                 </Typography>
                 <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 2 }}>
-                  {tableData.length} emails found
+                  {tableData.length} records found
                 </Typography>
                 <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
                   <Button
@@ -445,12 +437,12 @@ function GmailIntegration({ onDataFetched, dateRange }) {
                     startIcon={<DownloadIcon />}
                     onClick={handleDownloadCsv}
                     sx={{
-                      borderColor: "#4CAF50",
-                      color: "#2E7D32",
+                      borderColor: "#9C27B0",
+                      color: "#7B1FA2",
                       fontWeight: 600,
                       "&:hover": {
-                        borderColor: "#2E7D32",
-                        bgcolor: "rgba(46, 125, 50, 0.1)",
+                        borderColor: "#7B1FA2",
+                        bgcolor: "rgba(156, 39, 176, 0.1)",
                       },
                     }}
                   >
@@ -461,8 +453,8 @@ function GmailIntegration({ onDataFetched, dateRange }) {
                     onClick={() => setShowTable(!showTable)}
                     startIcon={showTable ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                     sx={{
-                      borderColor: "#4CAF50",
-                      color: "#2E7D32",
+                      borderColor: "#9C27B0",
+                      color: "#7B1FA2",
                       minWidth: 120,
                     }}
                   >
@@ -536,5 +528,5 @@ function GmailIntegration({ onDataFetched, dateRange }) {
   );
 }
 
-export default GmailIntegration;
+export default MailSuiteIntegration;
 
