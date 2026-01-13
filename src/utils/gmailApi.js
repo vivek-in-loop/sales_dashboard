@@ -77,7 +77,9 @@ export async function fetchUserEmail() {
     // Set token for API calls
     window.gapi.client.setToken({ access_token: currentAccessToken });
     
-    // Get user email from Gmail profile
+    // Get user email from Gmail profile (works with gmail.readonly scope)
+    // Note: userinfo endpoint requires additional OAuth scopes (profile/email)
+    // which we don't request, so we only use Gmail profile
     const profileResponse = await window.gapi.client.gmail.users.getProfile({
       userId: 'me'
     });
@@ -88,25 +90,13 @@ export async function fetchUserEmail() {
       return emailAddress;
     }
     
-    // Fallback: try userinfo endpoint
-    const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: {
-        'Authorization': `Bearer ${currentAccessToken}`
-      }
-    });
-    
-    if (userInfoResponse.ok) {
-      const userInfo = await userInfoResponse.json();
-      if (userInfo.email) {
-        currentUserEmail = userInfo.email;
-        return userInfo.email;
-      }
-    }
-    
-    throw new Error('Could not fetch user email');
+    throw new Error('Email address not found in Gmail profile');
   } catch (error) {
-    console.error('Error fetching user email:', error);
-    throw error;
+    console.error('Error fetching user email from Gmail profile:', error);
+    
+    // Don't try userinfo endpoint - it requires additional OAuth scopes
+    // that we don't have (would get 401 Unauthorized)
+    throw new Error('Could not fetch user email. Gmail profile API call failed.');
   }
 }
 
@@ -150,46 +140,62 @@ export function signIn(clientIdParam) {
         currentAccessToken = response.access_token;
         
         // Fetch user email asynchronously (don't block sign-in)
-        // Try Gmail profile first, then fallback to userinfo endpoint
+        // Use Gmail API profile (works with gmail.readonly scope)
+        // Note: userinfo endpoint requires additional OAuth scopes (profile/email) which we don't request
         const fetchEmail = async () => {
           try {
-            // First try: Gmail API profile (uses existing Gmail scope)
-            if (window.gapi && window.gapi.client && gapiInitialized) {
-              window.gapi.client.setToken({ access_token: currentAccessToken });
-              
+            // Wait a bit to ensure gapi.client is fully ready
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Retry logic for Gmail profile fetch
+            let retries = 3;
+            while (retries > 0) {
               try {
-                const profileResponse = await window.gapi.client.gmail.users.getProfile({
-                  userId: 'me'
-                });
-                const emailAddress = profileResponse.result?.emailAddress;
-                if (emailAddress) {
-                  currentUserEmail = emailAddress;
-                  return;
+                // Use Gmail API profile (uses existing Gmail scope - no additional scopes needed)
+                if (window.gapi && window.gapi.client && gapiInitialized) {
+                  window.gapi.client.setToken({ access_token: currentAccessToken });
+                  
+                  const profileResponse = await window.gapi.client.gmail.users.getProfile({
+                    userId: 'me'
+                  });
+                  
+                  const emailAddress = profileResponse.result?.emailAddress;
+                  if (emailAddress) {
+                    currentUserEmail = emailAddress;
+                    return; // Success!
+                  }
+                }
+                
+                // If we get here, gapi might not be ready yet
+                if (retries > 1) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
                 }
               } catch (profileError) {
-                console.warn('Gmail profile fetch failed, trying userinfo endpoint:', profileError);
+                // If it's an auth error, don't retry
+                if (profileError.message && (
+                  profileError.message.includes('401') || 
+                  profileError.message.includes('UNAUTHENTICATED')
+                )) {
+                  throw profileError;
+                }
+                
+                // For other errors, retry
+                if (retries > 1) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                } else {
+                  throw profileError;
+                }
               }
+              
+              retries--;
             }
             
-            // Fallback: userinfo endpoint
-            const userInfoResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-              headers: {
-                'Authorization': `Bearer ${currentAccessToken}`
-              }
-            });
-            
-            if (userInfoResponse.ok) {
-              const userInfo = await userInfoResponse.json();
-              if (userInfo.email) {
-                currentUserEmail = userInfo.email;
-                return;
-              }
-            }
-            
-            // If both methods fail, set to Unknown
+            // If all retries failed, set to Unknown
+            console.warn('Could not fetch email from Gmail profile after retries');
             currentUserEmail = 'Unknown';
           } catch (error) {
-            console.warn('Could not fetch user email:', error);
+            console.warn('Could not fetch user email from Gmail profile:', error);
+            // Don't try userinfo endpoint - it requires additional OAuth scopes
             currentUserEmail = 'Unknown';
           }
         };
