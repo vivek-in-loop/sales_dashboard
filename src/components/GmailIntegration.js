@@ -36,6 +36,7 @@ import {
   signOut,
   getCurrentUserEmail,
   fetchGmailDataAsCSV,
+  fetchUserEmail,
 } from "../utils/gmailApi";
 
 function GmailIntegration({ onDataFetched, dateRange }) {
@@ -48,6 +49,7 @@ function GmailIntegration({ onDataFetched, dateRange }) {
   const [tableHeaders, setTableHeaders] = useState([]);
   const [showTable, setShowTable] = useState(false);
   const [error, setError] = useState("");
+  const [fetchProgress, setFetchProgress] = useState({ current: 0, total: 0, message: "" });
   
   // Date range state - default to last 30 days
   const getDefaultStartDate = () => {
@@ -102,10 +104,22 @@ function GmailIntegration({ onDataFetched, dateRange }) {
       }
 
       if (window.gapi) {
-        initGmailAPI(apiKey, () => {
+        initGmailAPI(apiKey, async () => {
           if (isSignedIn()) {
             setGmailSignedIn(true);
-            setGmailUserEmail(getCurrentUserEmail());
+            let email = getCurrentUserEmail();
+            
+            // If email is "Unknown", try to fetch it
+            if (!email || email === 'Unknown') {
+              try {
+                email = await fetchUserEmail();
+              } catch (error) {
+                console.warn('Could not fetch user email:', error);
+                email = getCurrentUserEmail(); // Use whatever we have
+              }
+            }
+            
+            setGmailUserEmail(email);
           }
         });
       } else {
@@ -151,6 +165,17 @@ function GmailIntegration({ onDataFetched, dateRange }) {
       }
 
       await signIn(clientId);
+      
+      // Try to fetch email if it's still Unknown
+      let email = getCurrentUserEmail();
+      if (!email || email === 'Unknown') {
+        try {
+          email = await fetchUserEmail();
+        } catch (error) {
+          console.warn('Could not fetch user email after sign in:', error);
+        }
+      }
+      
       // State will be updated by the checkSignInStatus effect
     } catch (error) {
       console.error("Gmail sign-in error:", error);
@@ -188,11 +213,39 @@ function GmailIntegration({ onDataFetched, dateRange }) {
       return;
     }
 
+    // Validate dates are valid
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      setError("Invalid date selected");
+      return;
+    }
+
     try {
       setGmailFetching(true);
       setError("");
+      setFetchedCsvData(null);
+      setTableData([]);
+      setTableHeaders([]);
 
-      const csvData = await fetchGmailDataAsCSV({ startDate, endDate });
+      // Progress callback for user feedback
+      const progressCallback = (current, total, message) => {
+        setFetchProgress({
+          current: current || 0,
+          total: total || 0,
+          message: message || ""
+        });
+        console.log(`Progress: ${current || 0}/${total || '?'} - ${message || ''}`);
+      };
+
+      const csvData = await fetchGmailDataAsCSV({ 
+        startDate, 
+        endDate,
+        onProgress: progressCallback
+      });
+      
+      if (!csvData || csvData.trim().length === 0) {
+        throw new Error('No email data retrieved');
+      }
+      
       setFetchedCsvData(csvData);
 
       // Parse CSV data for table view
@@ -204,10 +257,15 @@ function GmailIntegration({ onDataFetched, dateRange }) {
             setTableHeaders(Object.keys(results.data[0]));
             setTableData(results.data);
             setShowTable(true);
+          } else {
+            setError("No email data found in the fetched results");
+            setFetchedCsvData(null);
           }
         },
         error: (error) => {
           console.error("Error parsing CSV:", error);
+          setError(`Failed to parse email data: ${error.message || "Unknown error"}`);
+          setFetchedCsvData(null);
         },
       });
 
@@ -221,7 +279,26 @@ function GmailIntegration({ onDataFetched, dateRange }) {
       }
     } catch (error) {
       console.error("Error fetching Gmail data:", error);
-      setError(`Failed to fetch Gmail data: ${error.message || "Unknown error"}`);
+      
+      // Provide user-friendly error messages
+      let errorMessage = "Failed to fetch Gmail data";
+      if (error.message) {
+        if (error.message.includes("not signed in") || error.message.includes("expired")) {
+          errorMessage = "Your session has expired. Please sign in again.";
+        } else if (error.message.includes("No emails found")) {
+          errorMessage = "No emails found for the selected date range. Please try a different date range.";
+        } else if (error.message.includes("rate limit") || error.message.includes("429")) {
+          errorMessage = "Gmail API rate limit reached. Please wait a few minutes and try again. For large datasets, the process may take longer.";
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      setError(errorMessage);
+      setFetchedCsvData(null);
+      setTableData([]);
+      setTableHeaders([]);
+      setFetchProgress({ current: 0, total: 0, message: "" });
     } finally {
       setGmailFetching(false);
     }
@@ -421,7 +498,26 @@ function GmailIntegration({ onDataFetched, dateRange }) {
               {gmailFetching ? "Fetching emails..." : "Fetch Sent Emails from Gmail"}
             </Button>
 
-            {gmailFetching && <LinearProgress sx={{ mt: 1 }} />}
+            {gmailFetching && (
+              <Box sx={{ mt: 1 }}>
+                <LinearProgress 
+                  variant={fetchProgress.total > 0 ? "determinate" : "indeterminate"}
+                  value={fetchProgress.total > 0 ? (fetchProgress.current / fetchProgress.total) * 100 : 0}
+                  sx={{ mb: 1 }}
+                />
+                {fetchProgress.message && (
+                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 0.5 }}>
+                    {fetchProgress.message}
+                    {fetchProgress.total > 0 && ` (${fetchProgress.current}/${fetchProgress.total})`}
+                  </Typography>
+                )}
+                {fetchProgress.total > 1000 && (
+                  <Alert severity="info" sx={{ mt: 1, fontSize: "0.75rem" }}>
+                    Large dataset detected. This may take several minutes. Please keep this window open.
+                  </Alert>
+                )}
+              </Box>
+            )}
 
             {fetchedCsvData && (
               <Box
