@@ -59,6 +59,14 @@ export function getCurrentUserEmail() {
 }
 
 /**
+ * Get current access token (for use by other integrations like MailSuite)
+ * @returns {string|null}
+ */
+export function getAccessToken() {
+  return currentAccessToken;
+}
+
+/**
  * Sign in with Google using Google Identity Services
  * @param {string} clientId - Google OAuth Client ID
  * @returns {Promise}
@@ -314,7 +322,10 @@ export async function fetchGmailDataAsCSV(options = {}) {
   }
   
   if (endDate) {
-    const endStr = endDate.toISOString().split('T')[0].replace(/-/g, '/');
+    // Gmail's 'before:' is exclusive, so add 1 day to make endDate inclusive
+    const endDateInclusive = new Date(endDate);
+    endDateInclusive.setDate(endDateInclusive.getDate() + 1);
+    const endStr = endDateInclusive.toISOString().split('T')[0].replace(/-/g, '/');
     query += ` before:${endStr}`;
   }
 

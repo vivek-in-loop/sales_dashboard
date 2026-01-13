@@ -67,6 +67,7 @@ import KpiCard from "../components/KpiCard";
 import DataTable from "../components/DataTable";
 import SdrCard from "../components/SdrCard";
 import GmailIntegration from "../components/GmailIntegration";
+import MailSuiteIntegration from "../components/MailSuiteIntegration";
 import { processMultiSdrPipeline } from "../emailProcessor";
 import { useDataContext } from "../context/DataContext";
 import {
@@ -119,6 +120,7 @@ function EmailAnalyticsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [toolsDialogOpen, setToolsDialogOpen] = useState(false);
   const [pipelineReportOpen, setPipelineReportOpen] = useState(false);
   const [matchingMode, setMatchingMode] = useState('composite'); // 'email_only', 'timestamp', 'hybrid', 'relaxed', 'name_timestamp', 'composite'
   const [filters, setFilters] = useState({
@@ -197,6 +199,18 @@ function EmailAnalyticsPage() {
       setSdrs((prev) => {
         const updated = [...prev];
         updated[0] = { ...updated[0], sendFile: file };
+        return updated;
+      });
+    }
+  };
+
+  // Handle MailSuite data fetched callback
+  const handleMailSuiteDataFetched = (file) => {
+    // Auto-populate the first SDR's opens file
+    if (sdrs.length > 0) {
+      setSdrs((prev) => {
+        const updated = [...prev];
+        updated[0] = { ...updated[0], openFile: file };
         return updated;
       });
     }
@@ -1082,6 +1096,31 @@ function EmailAnalyticsPage() {
                   }}
                 >
                   Upload Data
+                </Button>
+
+                <Button
+                  variant="outlined"
+                  size="medium"
+                  startIcon={<SettingsIcon />}
+                  onClick={() => setToolsDialogOpen(true)}
+                  sx={{
+                    borderColor: "#457b9d",
+                    color: "#457b9d",
+                    fontWeight: 700,
+                    py: 1,
+                    px: 3,
+                    borderRadius: 999,
+                    whiteSpace: "nowrap",
+                    "&:hover": {
+                      borderColor: "#1d3557",
+                      color: "#1d3557",
+                      bgcolor: "rgba(69, 123, 157, 0.1)",
+                      transform: "translateY(-1px)",
+                    },
+                    transition: "all 0.25s",
+                  }}
+                >
+                  Tools
                 </Button>
               </Stack>
             </Stack>
@@ -2086,7 +2125,7 @@ function EmailAnalyticsPage() {
           </DialogTitle>
           <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
             <Stack spacing={2.5} sx={{ mt: 2 }}>
-              {/* Gmail Integration Component */}
+              {/* Gmail Integration Component - HIDDEN
               <GmailIntegration
                 onDataFetched={handleGmailDataFetched}
                 dateRange={filters.dateRange}
@@ -2095,6 +2134,17 @@ function EmailAnalyticsPage() {
               <Divider sx={{ my: 1 }}>
                 <Chip label="OR" size="small" />
               </Divider>
+
+              MailSuite Integration Component - HIDDEN
+              <MailSuiteIntegration
+                onDataFetched={handleMailSuiteDataFetched}
+                dateRange={filters.dateRange}
+              />
+
+              <Divider sx={{ my: 1 }}>
+                <Chip label="OR" size="small" />
+              </Divider>
+              */}
 
                 <Card
                   elevation={2}
@@ -2285,6 +2335,49 @@ function EmailAnalyticsPage() {
               Done
             </Button>
           </DialogActions>
+        </Dialog>
+
+        {/* Tools Dialog - Gmail Integration */}
+        <Dialog
+          open={toolsDialogOpen}
+          onClose={() => setToolsDialogOpen(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          <DialogTitle
+            sx={{
+              bgcolor: "#457b9d",
+              color: "white",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              py: 2,
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+              <SettingsIcon sx={{ fontSize: 32 }} />
+              <Box>
+                <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                  Tools
+                </Typography>
+                <Typography variant="caption" sx={{ color: "rgba(255, 255, 255, 0.9)" }}>
+                  Download data from Gmail
+                </Typography>
+              </Box>
+            </Box>
+            <IconButton onClick={() => setToolsDialogOpen(false)} sx={{ color: "white" }}>
+              <CloseIcon />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent sx={{ p: 3, bgcolor: "#f1faee" }}>
+            <Stack spacing={2.5} sx={{ mt: 2 }}>
+              {/* Gmail Integration Component */}
+              <GmailIntegration
+                onDataFetched={handleGmailDataFetched}
+                dateRange={filters.dateRange}
+              />
+            </Stack>
+          </DialogContent>
         </Dialog>
 
         {/* Main Content */}
