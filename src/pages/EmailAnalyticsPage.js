@@ -376,9 +376,13 @@ function EmailAnalyticsPage() {
     const totalSends = send_open_df.length;
     
     // Stage 1: Total Prospect Count - unique Recipient Emails
+    // Normalize emails (lowercase, trim) to match SDR leaderboard calculation
     const totalProspects = new Set(
       send_open_df
-        .map((r) => r["Recipient Email"] || r.recipient_email)
+        .map((r) => {
+          const email = r["Recipient Email"] || r.recipient_email || r.Email || r.email;
+          return email ? String(email).toLowerCase().trim() : null;
+        })
         .filter(Boolean)
     ).size;
     
@@ -411,9 +415,13 @@ function EmailAnalyticsPage() {
       : 0;
     
     // Stage 2: Opened Prospect Count - unique prospects with non-null Views
+    // Normalize emails (lowercase, trim) to match SDR leaderboard calculation
     const openedProspects = new Set(
       recordsWithOpens
-        .map((r) => r["Recipient Email"] || r.recipient_email)
+        .map((r) => {
+          const email = r["Recipient Email"] || r.recipient_email || r.Email || r.email;
+          return email ? String(email).toLowerCase().trim() : null;
+        })
         .filter(Boolean)
     ).size;
     
@@ -762,10 +770,29 @@ function EmailAnalyticsPage() {
     [filteredForAnalysis, filters.metric, filters.timePeriod, filters.dateRange]
   );
 
-  const sdrMatrix = useMemo(
-    () => buildSdrMatrix(filteredSendOpen),
-    [filteredSendOpen]
-  );
+  const sdrMatrix = useMemo(() => {
+    // Build SDR matrix with sends/views/clicks from filteredSendOpen (all records)
+    const matrix = buildSdrMatrix(filteredSendOpen);
+    
+    // Calculate High Engagement using filteredForAnalysis (only records with contacts/Company URL)
+    // This matches the main dashboard calculation which uses filteredForAnalysis
+    const highEngagementBySdr = buildHighEngagementBySdr(filteredForAnalysis);
+    
+    // Merge High Engagement counts into the matrix
+    return matrix.map(sdr => {
+      const highEngagement = highEngagementBySdr.get(sdr.sdr) || 0;
+      // High Engagement Rate = (High Engagement Companies / Total Prospects) * 100
+      const highEngagementRate = sdr.totalProspects > 0 
+        ? (highEngagement / sdr.totalProspects) * 100 
+        : 0;
+      
+      return {
+        ...sdr,
+        highEngagement,
+        highEngagementRate,
+      };
+    });
+  }, [filteredSendOpen, filteredForAnalysis]);
 
   const handleProcess = async () => {
     if (!canProcess) return;
@@ -4739,6 +4766,7 @@ function buildSdrMatrix(rows) {
         prospects: new Set(), // Track unique recipient emails (matching main KPIs)
         openedProspects: new Set(), // Track unique prospects with non-null Views (for prospect opened rate)
         totalRecords: 0,
+        companyGroups: new Map(), // Track companies for high engagement calculation (matching main KPIs)
       });
     }
     const agg = map.get(key);
@@ -4770,10 +4798,18 @@ function buildSdrMatrix(rows) {
       agg.recordsWithOpens += 1;
     }
     
-    // High engagement: Views >= 5
-    if (views >= 5) {
-      agg.highEngagement += 1;
+    // Track companies for high engagement calculation (matching main KPIs logic)
+    // High Engagement = Companies where totalViews > 2 * totalEmails
+    const companyUrl = row["Company URL"] || row["Company URL ID"] || "Unknown";
+    if (!agg.companyGroups.has(companyUrl)) {
+      agg.companyGroups.set(companyUrl, {
+        emails: 0,
+        views: 0,
+      });
     }
+    const companyData = agg.companyGroups.get(companyUrl);
+    companyData.emails += 1;
+    companyData.views += views;
   });
 
   const results = [...map.values()].map((item) => {
@@ -4798,8 +4834,16 @@ function buildSdrMatrix(rows) {
       ? (item.clicks / item.views) * 100 
       : 0;
     
-    const highEngagementRate = item.sends > 0 
-      ? (item.highEngagement / item.sends) * 100 
+    // High Engagement: Count companies where totalViews > 2 * totalEmails (matching main KPIs logic)
+    // This matches the main dashboard calculation: highEngagementCompanies.length
+    const highEngagementCompanies = Array.from(item.companyGroups.entries()).filter(([_, companyData]) => {
+      return companyData.views > (2 * companyData.emails);
+    });
+    const highEngagement = highEngagementCompanies.length;
+    
+    // High Engagement Rate = (High Engagement Companies / Total Prospects) * 100
+    const highEngagementRate = totalProspects > 0 
+      ? (highEngagement / totalProspects) * 100 
       : 0;
     
     // Calculate score for ranking (weighted combination)
@@ -4823,6 +4867,47 @@ function buildSdrMatrix(rows) {
   });
 
   return results.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Calculate High Engagement companies per SDR (matching main dashboard logic)
+ * Uses filteredForAnalysis which has Company URL from contacts
+ */
+function buildHighEngagementBySdr(rows) {
+  const sdrMap = new Map();
+  
+  // Group by SDR first
+  rows.forEach((row) => {
+    const sdrKey = row.SDR_Name || row["Account Owner"] || "Unassigned";
+    if (!sdrMap.has(sdrKey)) {
+      sdrMap.set(sdrKey, new Map()); // Map of companyUrl -> {emails, views}
+    }
+    
+    const companyUrl = row["Company URL"] || row["Company URL ID"] || "Unknown";
+    const companyGroups = sdrMap.get(sdrKey);
+    
+    if (!companyGroups.has(companyUrl)) {
+      companyGroups.set(companyUrl, {
+        emails: 0,
+        views: 0,
+      });
+    }
+    
+    const companyData = companyGroups.get(companyUrl);
+    companyData.emails += 1;
+    companyData.views += (Number(row.Views) || 0);
+  });
+  
+  // Calculate High Engagement per SDR (companies where views > 2 * emails)
+  const result = new Map();
+  sdrMap.forEach((companyGroups, sdrKey) => {
+    const highEngagementCompanies = Array.from(companyGroups.entries()).filter(([_, companyData]) => {
+      return companyData.views > (2 * companyData.emails);
+    });
+    result.set(sdrKey, highEngagementCompanies.length);
+  });
+  
+  return result;
 }
 
 function buildCompanyEngagement(rows) {
