@@ -7,25 +7,47 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [token, setToken] = useState(null);
 
   // Check for existing session on mount
   useEffect(() => {
     const checkAuth = async () => {
+      const storedToken = localStorage.getItem('authToken');
       const storedSdrId = localStorage.getItem('currentSdrId');
-      if (storedSdrId) {
+
+      if (storedToken && storedSdrId) {
         try {
+          console.log('Verifying existing authentication session...');
+          // Verify token by making an authenticated request
           const sdr = await sdrApi.getById(storedSdrId);
+          console.log('Authentication verified successfully for user:', sdr.name);
+
+          // Double-check that we got valid SDR data
+          if (!sdr || (!sdr._id && !sdr.id)) {
+            throw new Error('Invalid SDR data received');
+          }
+
+          setToken(storedToken);
           setUser(sdr);
           setIsAuthenticated(true);
         } catch (err) {
-          // SDR not found, clear storage
+          console.warn('Authentication check failed, clearing session:', err.message);
+          // Token invalid or SDR not found, clear storage
+          localStorage.removeItem('authToken');
           localStorage.removeItem('currentSdrId');
+          setToken(null);
+          setUser(null);
+          setIsAuthenticated(false);
         }
+      } else {
+        console.log('No stored authentication found');
       }
+
       setLoading(false);
     };
+
     checkAuth();
-  }, []);
+  }, []); // Empty dependency array ensures this only runs once on mount
 
   const login = async (email, name) => {
     try {
@@ -58,69 +80,42 @@ export function AuthProvider({ children }) {
 
   const loginWithGoogle = async (email, name, picture) => {
     try {
-      // Ensure we have at least a name
-      const sdrName = name || email.split('@')[0] || 'User';
-      
-      // Try to find existing SDR by email
-      let sdr;
-      try {
-        const allSdrs = await sdrApi.getAll();
-        sdr = allSdrs.find(s => s.email?.toLowerCase() === email?.toLowerCase());
-      } catch (err) {
-        console.error('Error fetching SDRs:', err);
-        // If we can't fetch, try to create anyway (might be network issue)
+      // Use the new login endpoint
+      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:4030/api'}/sdrs/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email,
+          name: name,
+          picture: picture
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Login failed' }));
+        throw new Error(errorData.error || 'Login failed');
       }
 
-      // If not found, create new SDR
-      if (!sdr) {
-        try {
-          sdr = await sdrApi.create({
-            name: sdrName,
-            email: email,
-            picture: picture,
-          });
-        } catch (createError) {
-          console.error('Error creating SDR:', createError);
-          // If creation fails due to duplicate email, try fetching again
-          if (createError.message.includes('already exists') || createError.message.includes('duplicate')) {
-            try {
-              const allSdrs = await sdrApi.getAll();
-              sdr = allSdrs.find(s => s.email?.toLowerCase() === email?.toLowerCase());
-              // Update picture if it exists and SDR doesn't have one
-              if (picture && sdr && !sdr.picture) {
-                try {
-                  sdr = await sdrApi.update(sdr._id || sdr.id, { picture: picture });
-                } catch (updateError) {
-                  console.error('Error updating SDR picture:', updateError);
-                }
-              }
-            } catch (fetchError) {
-              throw new Error(`Failed to create or find SDR: ${createError.message}`);
-            }
-          } else {
-            throw createError;
-          }
-        }
-      } else {
-        // Update picture if it exists and SDR doesn't have one
-        if (picture && !sdr.picture) {
-          try {
-            sdr = await sdrApi.update(sdr._id || sdr.id, { picture: picture });
-          } catch (updateError) {
-            console.error('Error updating SDR picture:', updateError);
-          }
-        }
+      const data = await response.json();
+      const { user, token: jwtToken } = data;
+
+      if (!user || !jwtToken) {
+        throw new Error('Invalid login response');
       }
 
-      if (!sdr || (!sdr._id && !sdr.id)) {
-        throw new Error('SDR creation succeeded but no ID returned');
-      }
+      console.log('Login successful, user:', user.name, 'ID:', user._id || user.id);
 
-      const sdrId = sdr._id || sdr.id;
-      localStorage.setItem('currentSdrId', sdrId);
-      setUser(sdr);
+      // Store token and user data
+      localStorage.setItem('authToken', jwtToken);
+      localStorage.setItem('currentSdrId', user._id || user.id);
+
+      setToken(jwtToken);
+      setUser(user);
       setIsAuthenticated(true);
-      return { success: true, user: sdr };
+
+      return { success: true, user: user };
     } catch (error) {
       console.error('Google login error:', error);
       return { success: false, error: error.message || 'Failed to sign in with Google' };
@@ -128,7 +123,9 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
+    localStorage.removeItem('authToken');
     localStorage.removeItem('currentSdrId');
+    setToken(null);
     setUser(null);
     setIsAuthenticated(false);
   };
@@ -139,6 +136,7 @@ export function AuthProvider({ children }) {
 
   const value = {
     user,
+    token,
     loading,
     isAuthenticated,
     login,

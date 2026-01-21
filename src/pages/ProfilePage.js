@@ -25,6 +25,7 @@ function ProfilePage() {
   const [success, setSuccess] = useState("");
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [uploadHistory, setUploadHistory] = useState([]);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -64,6 +65,7 @@ function ProfilePage() {
   });
 
   // Load SDR profile and stats
+  const userId = user?._id || user?.id;
   useEffect(() => {
     if (user) {
       setFormData({
@@ -72,9 +74,11 @@ function ProfilePage() {
         team: user.team || "",
         role: user.role || "",
       });
+      // Initialize upload history from user data
+      setUploadHistory(user.upload_history || []);
       loadStats();
     }
-  }, [user]);
+  }, [userId]); // Only run when user ID changes
 
   // Check Gmail sign-in status periodically
   useEffect(() => {
@@ -158,8 +162,9 @@ function ProfilePage() {
       
       // Reload user data to get upload history
       const updatedSdr = await sdrApi.getById(sdrId);
-      if (updatedSdr) {
-        updateUser(updatedSdr);
+      if (updatedSdr && updatedSdr.upload_history) {
+        // Update upload history state without triggering user state change
+        setUploadHistory(updatedSdr.upload_history);
       }
     } catch (err) {
       console.log("Stats not available:", err.message);
@@ -463,11 +468,20 @@ function ProfilePage() {
     }
   };
 
+  // Define allowed admin emails for contacts upload
+  const adminEmails = [
+    "vivek.kumar@loopwork.co",
+    "vipul.babar@loopwork.co",
+    "harshit.gupta@loopwork.co"
+  ];
+
+  const isAdmin = user && adminEmails.includes(user.email?.toLowerCase());
+
   const tabs = [
     { id: "profile", label: "Profile", icon: "👤" },
     { id: "gmail", label: "Gmail Data", icon: "📧" },
     { id: "mailsuite", label: "MailSuite Data", icon: "📊" },
-    { id: "contacts", label: "Contacts", icon: "👥" },
+    ...(isAdmin ? [{ id: "contacts", label: "Contacts", icon: "👥" }] : []),
   ];
 
   return (
@@ -476,7 +490,14 @@ function ProfilePage() {
         {/* Header */}
         <div className="mb-8 flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">My Profile</h1>
+            <div className="flex items-center gap-3 mb-2">
+              <h1 className="text-3xl font-bold text-gray-900">My Profile</h1>
+              {isAdmin && (
+                <span className="px-2 py-1 bg-purple-100 text-purple-700 text-sm font-medium rounded-full">
+                  Admin
+                </span>
+              )}
+            </div>
             <p className="text-gray-600">Manage your profile and upload data files</p>
           </div>
           <button
@@ -545,7 +566,7 @@ function ProfilePage() {
         )}
 
         {/* Upload History Section */}
-        {user?.upload_history && user.upload_history.length > 0 && (
+        {uploadHistory && uploadHistory.length > 0 && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Upload History</h2>
             <div className="overflow-x-auto">
@@ -573,7 +594,7 @@ function ProfilePage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {user.upload_history
+                  {uploadHistory
                     .slice()
                     .sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at))
                     .slice(0, 20)
@@ -610,9 +631,9 @@ function ProfilePage() {
                 </tbody>
               </table>
             </div>
-            {user.upload_history.length > 20 && (
+            {uploadHistory.length > 20 && (
               <p className="text-xs text-gray-500 mt-3 text-center">
-                Showing last 20 uploads of {user.upload_history.length} total
+                Showing last 20 uploads of {uploadHistory.length} total
               </p>
             )}
           </div>

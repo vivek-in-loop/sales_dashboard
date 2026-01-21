@@ -3,19 +3,16 @@ import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-ro
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Email as EmailIcon,
-  Phone as PhoneIcon,
-  Dashboard as DashboardIcon,
   Menu as MenuIcon,
   BarChart as BarChartIcon,
   AccountCircle as AccountCircleIcon,
 } from "@mui/icons-material";
 import EmailAnalyticsPage from "./pages/EmailAnalyticsPage";
-import CallsAnalyticsPage from "./pages/CallsAnalyticsPage";
-import CombinedAnalyticsPage from "./pages/CombinedAnalyticsPage";
 import ProfilePage from "./pages/ProfilePage";
+import AdminPage from "./pages/AdminPage";
 import LoginPage from "./pages/LoginPage";
 import { DataProvider } from "./context/DataContext";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
 
@@ -53,6 +50,16 @@ function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const { user } = useAuth();
+
+  // Define allowed admin emails
+  const adminEmails = [
+    "vivek.kumar@loopwork.co",
+    "vipul.babar@loopwork.co",
+    "harshit.gupta@loopwork.co"
+  ];
+
+  const isAdmin = user && adminEmails.includes(user.email?.toLowerCase());
 
   useEffect(() => {
     const handleResize = () => {
@@ -66,6 +73,7 @@ function AppLayout() {
     setMobileOpen(!mobileOpen);
   };
 
+
   useEffect(() => {
     const handler = (event) => {
       if (event.detail && event.detail.id) {
@@ -76,12 +84,14 @@ function AppLayout() {
     return () => window.removeEventListener("email-section-change", handler);
   }, []);
 
-  const menuItems = [
+  const baseMenuItems = [
     { text: "Email Analytics", icon: <EmailIcon />, path: "/email" },
-    { text: "Calls Analytics", icon: <PhoneIcon />, path: "/calls" },
-    { text: "Combined Analytics", icon: <DashboardIcon />, path: "/combined" },
     { text: "Profile", icon: <AccountCircleIcon />, path: "/profile" },
   ];
+
+  const menuItems = isAdmin
+    ? [...baseMenuItems, { text: "Admin Panel", icon: <BarChartIcon />, path: "/admin" }]
+    : baseMenuItems;
 
   const drawer = (
     <div className="h-screen bg-white border-r border-gray-200 text-gray-900 flex flex-col w-[260px] overflow-y-auto shadow-sm">
@@ -239,29 +249,21 @@ function AppLayout() {
               </ProtectedRoute>
             } 
           />
-          <Route 
-            path="/calls" 
-            element={
-              <ProtectedRoute>
-                <CallsAnalyticsPage />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/combined" 
-            element={
-              <ProtectedRoute>
-                <CombinedAnalyticsPage />
-              </ProtectedRoute>
-            } 
-          />
-          <Route 
-            path="/profile" 
+          <Route
+            path="/profile"
             element={
               <ProtectedRoute>
                 <ProfilePage />
               </ProtectedRoute>
-            } 
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <AdminPage />
+              </ProtectedRoute>
+            }
           />
         </Routes>
       </main>

@@ -5,6 +5,31 @@
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:4030/api';
 
 /**
+ * Get authorization headers for authenticated requests
+ */
+const getAuthHeaders = (includeContentType = true) => {
+  const token = localStorage.getItem('authToken');
+  const headers = {};
+
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  return headers;
+};
+
+/**
+ * Check if user is authenticated
+ */
+export const isAuthenticated = () => {
+  return !!localStorage.getItem('authToken');
+};
+
+/**
  * SDR API functions
  */
 export const sdrApi = {
@@ -13,7 +38,9 @@ export const sdrApi = {
    */
   getAll: async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/sdrs`);
+      const response = await fetch(`${API_BASE_URL}/sdrs`, {
+        headers: getAuthHeaders(),
+      });
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
@@ -44,7 +71,9 @@ export const sdrApi = {
    */
   getById: async (id) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/sdrs/${id}`);
+      const response = await fetch(`${API_BASE_URL}/sdrs/${id}`, {
+        headers: getAuthHeaders(),
+      });
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
@@ -81,9 +110,7 @@ export const sdrApi = {
     try {
       const response = await fetch(`${API_BASE_URL}/sdrs`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify(sdrData),
       });
       
@@ -118,9 +145,7 @@ export const sdrApi = {
   update: async (id, sdrData) => {
     const response = await fetch(`${API_BASE_URL}/sdrs/${id}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify(sdrData),
     });
     if (!response.ok) {
@@ -136,6 +161,7 @@ export const sdrApi = {
   delete: async (id) => {
     const response = await fetch(`${API_BASE_URL}/sdrs/${id}`, {
       method: 'DELETE',
+      headers: getAuthHeaders(),
     });
     if (!response.ok) {
       throw new Error('Failed to delete SDR');
@@ -228,7 +254,9 @@ export const dataApi = {
    * Get Gmail send data as CSV
    */
   getGmailSend: async (sdrId) => {
-    const response = await fetch(`${API_BASE_URL}/data/gmail-send/${sdrId}`);
+    const response = await fetch(`${API_BASE_URL}/data/gmail-send/${sdrId}`, {
+      headers: getAuthHeaders(),
+    });
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error('No Gmail send data found');
@@ -242,7 +270,9 @@ export const dataApi = {
    * Get MailSuite data as CSV
    */
   getMailSuite: async (sdrId) => {
-    const response = await fetch(`${API_BASE_URL}/data/mailsuite/${sdrId}`);
+    const response = await fetch(`${API_BASE_URL}/data/mailsuite/${sdrId}`, {
+      headers: getAuthHeaders(),
+    });
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error('No MailSuite data found');
@@ -257,7 +287,9 @@ export const dataApi = {
    */
   getStats: async (sdrId) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/data/stats/${sdrId}`);
+      const response = await fetch(`${API_BASE_URL}/data/stats/${sdrId}`, {
+        headers: getAuthHeaders(),
+      });
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
@@ -326,7 +358,9 @@ export const dataApi = {
    */
   getAllSdrs: async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/data/all-sdrs`);
+      const response = await fetch(`${API_BASE_URL}/data/all-sdrs`, {
+        headers: getAuthHeaders(),
+      });
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
@@ -357,7 +391,9 @@ export const dataApi = {
    */
   getAllEmailAnalytics: async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/data/all-email-analytics`);
+      const response = await fetch(`${API_BASE_URL}/data/all-email-analytics`, {
+        headers: getAuthHeaders(),
+      });
       const contentType = response.headers.get("content-type");
       
       if (!response.ok) {
