@@ -45,6 +45,39 @@ export function initGmailAPI(apiKey, onLoadCallback) {
 }
 
 /**
+ * Check if Gmail API is initialized and ready
+ * @returns {boolean}
+ */
+export function isGmailAPIReady() {
+  return gapiInitialized && window.gapi && window.gapi.client;
+}
+
+/**
+ * Wait for Gmail API to be ready
+ * @param {number} maxWait - Maximum wait time in milliseconds (default: 10000)
+ * @returns {Promise<boolean>} True if ready, false if timeout
+ */
+export function waitForGmailAPI(maxWait = 10000) {
+  return new Promise((resolve) => {
+    if (isGmailAPIReady()) {
+      resolve(true);
+      return;
+    }
+
+    const startTime = Date.now();
+    const checkInterval = setInterval(() => {
+      if (isGmailAPIReady()) {
+        clearInterval(checkInterval);
+        resolve(true);
+      } else if (Date.now() - startTime >= maxWait) {
+        clearInterval(checkInterval);
+        resolve(false);
+      }
+    }, 100);
+  });
+}
+
+/**
  * Check if user is signed in
  * @returns {boolean}
  */
@@ -111,18 +144,23 @@ export function getAccessToken() {
 /**
  * Sign in with Google using Google Identity Services
  * @param {string} clientIdParam - Google OAuth Client ID
+ * @param {number} waitTime - Time to wait for API initialization in ms (default: 5000)
  * @returns {Promise}
  */
-export function signIn(clientIdParam) {
-  return new Promise((resolve, reject) => {
+export function signIn(clientIdParam, waitTime = 5000) {
+  return new Promise(async (resolve, reject) => {
     if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
       reject(new Error('Google Identity Services not loaded. Please refresh the page.'));
       return;
     }
 
+    // Wait for Gmail API to be initialized
     if (!gapiInitialized) {
-      reject(new Error('Gmail API not initialized. Please wait a moment and try again.'));
+      const isReady = await waitForGmailAPI(waitTime);
+      if (!isReady) {
+        reject(new Error('Gmail API initialization timed out. Please ensure REACT_APP_GOOGLE_API_KEY is set and try refreshing the page.'));
       return;
+      }
     }
 
     clientId = clientIdParam;

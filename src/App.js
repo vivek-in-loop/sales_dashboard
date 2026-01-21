@@ -2,54 +2,24 @@ import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
-  Box,
-  Drawer,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  Typography,
-  Divider,
-  CssBaseline,
-  IconButton,
-  useMediaQuery,
-  useTheme as useMuiTheme,
-} from "@mui/material";
-import {
   Email as EmailIcon,
   Phone as PhoneIcon,
   Dashboard as DashboardIcon,
   Menu as MenuIcon,
   BarChart as BarChartIcon,
+  AccountCircle as AccountCircleIcon,
 } from "@mui/icons-material";
-import { ThemeProvider, createTheme } from "@mui/material/styles";
 import EmailAnalyticsPage from "./pages/EmailAnalyticsPage";
 import CallsAnalyticsPage from "./pages/CallsAnalyticsPage";
 import CombinedAnalyticsPage from "./pages/CombinedAnalyticsPage";
+import ProfilePage from "./pages/ProfilePage";
+import LoginPage from "./pages/LoginPage";
 import { DataProvider } from "./context/DataContext";
+import { AuthProvider } from "./context/AuthContext";
+import ProtectedRoute from "./components/ProtectedRoute";
 import "./App.css";
 
 const queryClient = new QueryClient();
-const theme = createTheme({
-  palette: {
-    background: {
-      default: "#f1faee",
-    },
-    primary: {
-      main: "#457b9d",
-      dark: "#1d3557",
-      light: "#a8dadc",
-    },
-    secondary: {
-      main: "#e63946",
-    },
-  },
-  typography: {
-    fontFamily: '"Inter","Segoe UI",system-ui,-apple-system,sans-serif',
-  },
-});
-
 const drawerWidth = 260;
 
 const emailSectionNavItems = [
@@ -65,16 +35,15 @@ const emailSectionNavItems = [
 
 function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
         <DataProvider>
           <BrowserRouter>
             <AppLayout />
           </BrowserRouter>
         </DataProvider>
-      </QueryClientProvider>
-    </ThemeProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 
@@ -83,8 +52,15 @@ function AppLayout() {
   const [emailSection, setEmailSection] = useState("section-overview");
   const navigate = useNavigate();
   const location = useLocation();
-  const muiTheme = useMuiTheme();
-  const isMobile = useMediaQuery(muiTheme.breakpoints.down("md"));
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -104,87 +80,68 @@ function AppLayout() {
     { text: "Email Analytics", icon: <EmailIcon />, path: "/email" },
     { text: "Calls Analytics", icon: <PhoneIcon />, path: "/calls" },
     { text: "Combined Analytics", icon: <DashboardIcon />, path: "/combined" },
+    { text: "Profile", icon: <AccountCircleIcon />, path: "/profile" },
   ];
 
   const drawer = (
-    <Box sx={{ height: "100%", bgcolor: "#1d3557", color: "white" }}>
-      <Box
-        sx={{
-          p: 3,
-          background: "linear-gradient(135deg, #1d3557 0%, #457b9d 100%)",
-          borderBottom: "2px solid rgba(255, 255, 255, 0.1)",
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1 }}>
-          <BarChartIcon sx={{ fontSize: 40, color: "white" }} />
-          <Box>
-            <Typography variant="h5" sx={{ fontWeight: 800, color: "white" }}>
-              Sales Dashboard
-            </Typography>
-            <Typography variant="caption" sx={{ color: "rgba(255, 255, 255, 0.8)" }}>
-              Analytics Platform
-            </Typography>
-          </Box>
-        </Box>
-      </Box>
-      <List sx={{ px: 1.5, py: 2 }}>
-        {menuItems.map((item) => {
-          const isActive = location.pathname === item.path || (location.pathname === "/" && item.path === "/email");
-          return (
-            <ListItem key={item.text} disablePadding sx={{ mb: 1 }}>
-              <ListItemButton
+    <div className="h-screen bg-white border-r border-gray-200 text-gray-900 flex flex-col w-[260px] overflow-y-auto shadow-sm">
+      {/* Header */}
+      <div className="p-6 border-b border-gray-200 bg-gray-50">
+        <div className="flex items-center gap-3 mb-1">
+        <img src="https://cdn.prod.website-files.com/625e799b877c107387cdf3ac/64d64c3870a418ff730a354c_91ae17956a95542ff4276cdbb7f25676_loop.png" alt="Sales Dashboard" />
+          
+        </div>
+        <div>
+            <h1 className="text-xl font-extrabold text-gray-900">OB Sales Dashboard</h1>
+            <p className="text-xs text-gray-500">Analytics Platform</p>
+          </div>
+      </div>
+
+      {/* Main Navigation */}
+      <div className="px-3 py-4 flex-1 overflow-y-auto">
+        <nav className="space-y-1">
+          {menuItems.map((item) => {
+            const isActive = location.pathname === item.path || (location.pathname === "/" && item.path === "/email");
+            return (
+              <button
+                key={item.text}
                 onClick={() => {
                   navigate(item.path);
                   if (isMobile) setMobileOpen(false);
                 }}
-                sx={{
-                  borderRadius: 999,
-                  color: "white",
-                  bgcolor: isActive ? "rgba(255, 255, 255, 0.15)" : "transparent",
-                  "&:hover": {
-                    bgcolor: "rgba(255, 255, 255, 0.1)",
-                  },
-                  py: 0.75,
-                  px: 1.5,
-                  minHeight: 36,
-                  transition: "all 0.2s",
-                  border: isActive ? "1px solid rgba(255, 255, 255, 0.3)" : "1px solid transparent",
-                }}
+                className={`
+                  w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200
+                  ${isActive 
+                    ? "bg-blue-600 text-white font-semibold shadow-sm" 
+                    : "bg-transparent text-gray-700 font-medium hover:bg-gray-100 hover:text-gray-900"
+                  }
+                  text-sm
+                `}
               >
-                <ListItemIcon sx={{ color: "white", minWidth: 32 }}>
+                <span className={isActive ? "text-white" : "text-gray-600"} style={{ fontSize: "18px" }}>
                   {React.cloneElement(item.icon, { fontSize: "small" })}
-                </ListItemIcon>
-                <ListItemText
-                  primary={item.text}
-                  primaryTypographyProps={{
-                    fontWeight: isActive ? 700 : 500,
-                    fontSize: "0.85rem",
-                  }}
-                />
-              </ListItemButton>
-            </ListItem>
-          );
-        })}
-      </List>
-      <Divider sx={{ borderColor: "rgba(255, 255, 255, 0.1)", mx: 2 }} />
+                </span>
+                <span>{item.text}</span>
+              </button>
+            );
+          })}
+        </nav>
 
-      {/* Email sections nav (only on Email Analytics page) */}
-      {(location.pathname === "/email" || location.pathname === "/") && (
-        <>
-          <Box sx={{ px: 2, pt: 2, pb: 1 }}>
-            <Typography
-              variant="caption"
-              sx={{ color: "rgba(255, 255, 255, 0.9)", fontWeight: 600 }}
-            >
-              Email Sections
-            </Typography>
-          </Box>
-          <List sx={{ px: 1, pb: 2 }}>
-            {emailSectionNavItems.map((item) => {
-              const isActive = emailSection === item.id;
-              return (
-                <ListItem key={item.id} disablePadding sx={{ mb: 0.5 }}>
-                  <ListItemButton
+        {/* Divider */}
+        <div className="border-t border-gray-200 my-4 mx-4"></div>
+
+        {/* Email sections nav (only on Email Analytics page) */}
+        {(location.pathname === "/email" || location.pathname === "/") && (
+          <div>
+            <div className="px-4 pt-4 pb-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Email Sections</p>
+            </div>
+            <nav className="px-2 pb-4 space-y-1">
+              {emailSectionNavItems.map((item) => {
+                const isActive = emailSection === item.id;
+                return (
+                  <button
+                    key={item.id}
                     onClick={() => {
                       if (location.pathname !== "/email") {
                         navigate("/email");
@@ -201,129 +158,114 @@ function AppLayout() {
                       // Give React time to render section after navigation
                       setTimeout(scrollToSection, 200);
                     }}
-                    sx={{
-                      borderRadius: 10,
-                      py: 0.5,
-                      px: 2,
-                      minHeight: 32,
-                      color: "rgba(255,255,255,0.9)",
-                      bgcolor: isActive
-                        ? "rgba(255,255,255,0.18)"
-                        : "transparent",
-                      "&:hover": {
-                        bgcolor: "rgba(255,255,255,0.12)",
-                      },
-                    }}
+                    className={`
+                      w-full text-left py-2 px-4 rounded-lg text-xs transition-all duration-200
+                      ${isActive
+                        ? "bg-blue-50 text-blue-600 font-semibold border-l-2 border-blue-600"
+                        : "bg-transparent text-gray-600 font-medium hover:bg-gray-100 hover:text-gray-900"
+                      }
+                    `}
                   >
-                    <ListItemText
-                      primary={item.label}
-                      primaryTypographyProps={{
-                        fontSize: "0.8rem",
-                        fontWeight: isActive ? 700 : 500,
-                      }}
-                    />
-                  </ListItemButton>
-                </ListItem>
-              );
-            })}
-          </List>
-        </>
-      )}
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        )}
+      </div>
 
-      <Box sx={{ p: 3, mt: "auto" }}>
-        <Typography variant="caption" sx={{ color: "rgba(255, 255, 255, 0.7)" }}>
-          © 2025 Sales Dashboard
-        </Typography>
-      </Box>
-    </Box>
+      {/* Footer */}
+      <div className="p-6 mt-auto border-t border-gray-200 bg-gray-50">
+        <p className="text-xs text-gray-500">© 2025 Sales Dashboard</p>
+      </div>
+    </div>
   );
 
   return (
-    <Box sx={{ display: "flex", minHeight: "100vh" }}>
+    <div className="flex min-h-screen overflow-x-hidden">
       {/* Mobile Menu Button */}
       {isMobile && (
-        <Box
-          sx={{
-            position: "fixed",
-            top: 16,
-            left: 16,
-            zIndex: 1300,
-          }}
+        <button
+          onClick={handleDrawerToggle}
+          className="fixed top-4 left-4 z-50 bg-white p-2 rounded-lg shadow-lg hover:bg-gray-50 transition-colors border border-gray-200"
+          aria-label="Toggle menu"
         >
-          <IconButton
-            color="primary"
-            onClick={handleDrawerToggle}
-            sx={{
-              bgcolor: "white",
-              boxShadow: 3,
-              "&:hover": {
-                bgcolor: "#F5F5F5",
-              },
-            }}
-          >
-            <MenuIcon />
-          </IconButton>
-        </Box>
+          <MenuIcon className="text-slate-700" />
+        </button>
+      )}
+
+      {/* Mobile Overlay */}
+      {isMobile && mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={handleDrawerToggle}
+        ></div>
       )}
 
       {/* Side Drawer */}
-      <Box
-        component="nav"
-        sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}
-      >
-        {/* Mobile Drawer */}
-        <Drawer
-          variant="temporary"
-          open={mobileOpen}
-          onClose={handleDrawerToggle}
-          ModalProps={{
-            keepMounted: true, // Better mobile performance
-          }}
-          sx={{
-            display: { xs: "block", md: "none" },
-            "& .MuiDrawer-paper": {
-              boxSizing: "border-box",
-              width: drawerWidth,
-            },
-          }}
-        >
-          {drawer}
-        </Drawer>
-        {/* Desktop Drawer */}
-        <Drawer
-          variant="permanent"
-          sx={{
-            display: { xs: "none", md: "block" },
-            "& .MuiDrawer-paper": {
-              boxSizing: "border-box",
-              width: drawerWidth,
-              border: "none",
-            },
-          }}
-          open
-        >
-          {drawer}
-        </Drawer>
-      </Box>
+      <nav className={`
+        ${isMobile 
+          ? `fixed top-0 left-0 h-screen z-50 transform transition-transform duration-300 ease-in-out ${
+              mobileOpen ? 'translate-x-0' : '-translate-x-full'
+            }`
+          : 'hidden md:block md:fixed md:left-0 md:top-0 md:h-screen'
+        }
+        w-[260px] flex-shrink-0 z-30
+      `}>
+        {drawer}
+      </nav>
 
       {/* Main Content */}
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          width: { xs: "100%", md: `calc(100% - ${drawerWidth}px)` },
-          minHeight: "100vh",
-          bgcolor: "#f1faee",
-        }}
-      >
+      <main className={`
+        flex-grow min-h-screen bg-slate-50 w-full max-w-full overflow-x-hidden
+        ${isMobile ? '' : 'md:ml-[260px] md:w-[calc(100%-260px)]'}
+      `}>
         <Routes>
-          <Route path="/" element={<EmailAnalyticsPage />} />
-          <Route path="/email" element={<EmailAnalyticsPage />} />
-          <Route path="/calls" element={<CallsAnalyticsPage />} />
-          <Route path="/combined" element={<CombinedAnalyticsPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route 
+            path="/" 
+            element={
+              <ProtectedRoute>
+                <EmailAnalyticsPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/email" 
+            element={
+              <ProtectedRoute>
+                <EmailAnalyticsPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/calls" 
+            element={
+              <ProtectedRoute>
+                <CallsAnalyticsPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/combined" 
+            element={
+              <ProtectedRoute>
+                <CombinedAnalyticsPage />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/profile" 
+            element={
+              <ProtectedRoute>
+                <ProfilePage />
+              </ProtectedRoute>
+            } 
+          />
         </Routes>
-      </Box>
-    </Box>
+      </main>
+    </div>
   );
 }
 

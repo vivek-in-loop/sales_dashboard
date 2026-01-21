@@ -22,7 +22,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
+/server
 # private data files (sensitive CSV files)
 /data/uploads/
 /data/outputs/
