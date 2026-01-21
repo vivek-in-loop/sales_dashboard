@@ -1212,13 +1212,13 @@ function EmailAnalyticsPage() {
                       <div>
                         <p className="text-xs text-gray-500 mb-0.5">Gmail</p>
                         <p className="text-lg font-bold text-gray-900">
-                          {sdr.gmail_send_records?.toLocaleString() || 0}
+                          {sdr.total_gmail_records?.toLocaleString() || 0}
                         </p>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500 mb-0.5">MailSuite</p>
                         <p className="text-lg font-bold text-gray-900">
-                          {sdr.mailsuite_records?.toLocaleString() || 0}
+                          {sdr.total_mailsuite_records?.toLocaleString() || 0}
                         </p>
                       </div>
                     </div>

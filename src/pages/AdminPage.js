@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { dataApi } from "../utils/api";
+import { dataApi, getAuthHeaders } from "../utils/api";
 import { useNavigate } from "react-router-dom";
 
 function AdminPage() {
@@ -9,6 +9,7 @@ function AdminPage() {
   const [sdrs, setSdrs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [debugInfo, setDebugInfo] = useState(null);
 
   // Define allowed admin emails
   const adminEmails = [
@@ -36,11 +37,28 @@ function AdminPage() {
       setLoading(true);
       const sdrsData = await dataApi.getAllSdrs();
       setSdrs(sdrsData);
+      console.log("Loaded SDR data:", sdrsData);
     } catch (err) {
       console.error("Failed to load admin data:", err);
       setError("Failed to load SDR data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDebugInfo = async () => {
+    try {
+      // Try to call the debug endpoint if it exists
+      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:4030/api'}/data/debug`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.ok) {
+        const debugData = await response.json();
+        setDebugInfo(debugData);
+        console.log("Debug info:", debugData);
+      }
+    } catch (err) {
+      console.log("Debug endpoint not available:", err);
     }
   };
 
@@ -55,15 +73,6 @@ function AdminPage() {
     });
   };
 
-  const formatUploadHistory = (history) => {
-    if (!history || history.length === 0) return "No uploads";
-
-    return history
-      .sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at))
-      .slice(0, 3) // Show last 3 uploads
-      .map(upload => `${upload.type} (${upload.total_records} records)`)
-      .join(", ");
-  };
 
   if (!isAdmin) {
     return (
@@ -88,6 +97,12 @@ function AdminPage() {
             <p className="text-gray-600">Manage SDRs and monitor upload activity</p>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={loadDebugInfo}
+              className="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-100 border border-blue-300 rounded-lg hover:bg-blue-200 transition"
+            >
+              Debug Info
+            </button>
             <span className="px-3 py-1 bg-purple-100 text-purple-700 text-sm font-medium rounded-full">
               Admin Access
             </span>
@@ -143,6 +158,26 @@ function AdminPage() {
           </div>
         </div>
 
+        {/* Debug Info */}
+        {debugInfo && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+            <h3 className="text-lg font-semibold text-yellow-800 mb-2">Debug Information</h3>
+            <div className="text-sm text-yellow-700">
+              <p>Total SDRs: {debugInfo.total_sdrs}</p>
+              <p>Total Gmail Records in DB: {debugInfo.total_gmail_records}</p>
+              <p>Total MailSuite Records in DB: {debugInfo.total_mailsuite_records}</p>
+              <div className="mt-2">
+                <p className="font-medium">SDR Details:</p>
+                {debugInfo.sdr_details?.map(sdr => (
+                  <div key={sdr.sdr_id} className="ml-4 mt-1">
+                    {sdr.sdr_name}: Gmail({sdr.gmail_count}/{sdr.gmail_count_str}), MailSuite({sdr.mailsuite_count}/{sdr.mailsuite_count_str}), Uploads({sdr.upload_history})
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* SDRs Cards */}
         <div className="space-y-6">
           <div className="flex justify-between items-center">
@@ -194,6 +229,10 @@ function AdminPage() {
                         {sdr.team && (
                           <p className="text-xs text-gray-500 mt-1">Team: {sdr.team}</p>
                         )}
+                        {/* Debug info */}
+                        <div className="text-xs text-gray-400 mt-1">
+                          Upload history: {sdr.upload_history?.length || 0} entries
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -205,13 +244,29 @@ function AdminPage() {
                         <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800">
                           📧 {sdr.total_gmail_records || 0}
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">Gmail Records</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Gmail Records
+                          {sdr.upload_history?.some(u => u.type === 'gmail_send') && (
+                            <span className="block text-xs text-green-600">✓ Has uploads</span>
+                          )}
+                        </p>
+                        {sdr.calculated_gmail_count !== undefined && sdr.calculated_gmail_count !== sdr.total_gmail_records && (
+                          <p className="text-xs text-red-500">DB: {sdr.calculated_gmail_count}</p>
+                        )}
                       </div>
                       <div className="text-center">
                         <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800">
                           📊 {sdr.total_mailsuite_records || 0}
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">MailSuite Records</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          MailSuite Records
+                          {sdr.upload_history?.some(u => u.type === 'mailsuite') && (
+                            <span className="block text-xs text-green-600">✓ Has uploads</span>
+                          )}
+                        </p>
+                        {sdr.calculated_mailsuite_count !== undefined && sdr.calculated_mailsuite_count !== sdr.total_mailsuite_records && (
+                          <p className="text-xs text-red-500">DB: {sdr.calculated_mailsuite_count}</p>
+                        )}
                       </div>
                     </div>
 

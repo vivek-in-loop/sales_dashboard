@@ -419,3 +419,6 @@ export const dataApi = {
     }
   },
 };
+
+// Export utility functions
+export { getAuthHeaders };
