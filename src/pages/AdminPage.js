@@ -15,7 +15,8 @@ function AdminPage() {
   const adminEmails = [
     "vivek.kumar@loopwork.co",
     "vipul.babar@loopwork.co",
-    "harshit.gupta@loopwork.co"
+    "harshit.gupta@loopwork.co",
+    "anirudh.vashishth@loopwork.co"
   ];
 
   const isAdmin = user && adminEmails.includes(user.email?.toLowerCase());
