@@ -214,6 +214,7 @@ function AdminPage() {
                           className="h-12 w-12 rounded-full border-2 border-gray-200"
                           src={sdr.picture}
                           alt={sdr.name}
+                          referrerPolicy="no-referrer"
                         />
                       ) : (
                         <div className="h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center border-2 border-gray-200">

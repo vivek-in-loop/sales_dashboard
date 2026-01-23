@@ -184,6 +184,7 @@ export const dataApi = {
 
       const response = await fetch(`${API_BASE_URL}/data/gmail-send/${sdrId}`, {
         method: 'POST',
+        headers: getAuthHeaders(false), // Don't set Content-Type for FormData
         body: formData,
       });
 
@@ -222,6 +223,7 @@ export const dataApi = {
 
       const response = await fetch(`${API_BASE_URL}/data/mailsuite/${sdrId}`, {
         method: 'POST',
+        headers: getAuthHeaders(false), // Don't set Content-Type for FormData
         body: formData,
       });
 
@@ -325,6 +327,7 @@ export const dataApi = {
 
       const response = await fetch(`${API_BASE_URL}/data/contacts`, {
         method: 'POST',
+        headers: getAuthHeaders(false), // Don't set Content-Type for FormData
         body: formData,
       });
 

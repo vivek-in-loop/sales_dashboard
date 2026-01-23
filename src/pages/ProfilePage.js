@@ -690,6 +690,7 @@ function ProfilePage() {
                         src={user.picture}
                         alt={user.name || user.email || "Profile"}
                         className="w-20 h-20 rounded-full object-cover border-4 border-blue-200 shadow-md"
+                        referrerPolicy="no-referrer"
                         onError={(e) => {
                           // Fallback to default avatar if image fails to load
                           e.target.onerror = null;

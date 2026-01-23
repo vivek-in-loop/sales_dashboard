@@ -314,6 +314,7 @@ function EmailAnalyticsPage() {
     }, 0);
 
     window.addEventListener("scroll", handleScroll, { passive: true });
+
     return () => {
       clearTimeout(timeoutId);
       window.removeEventListener("scroll", handleScroll);
@@ -1183,6 +1184,7 @@ function EmailAnalyticsPage() {
                           src={sdr.picture}
                           alt={sdr.name || sdr.email || "SDR"}
                           className="w-8 h-8 rounded-full object-cover border border-gray-200"
+                          referrerPolicy="no-referrer"
                           onError={(e) => {
                             e.target.onerror = null;
                             e.target.src = '';
@@ -3872,7 +3874,7 @@ function EmailAnalyticsPage() {
                           High Engagement Prospects
                       </h2>
                       <p className="text-sm text-gray-500">
-                          Prospects with engagement rate > 200%
+                          Prospects with engagement rate &gt; 200%
                       </p>
                     </div>
                     <div className="p-5">
