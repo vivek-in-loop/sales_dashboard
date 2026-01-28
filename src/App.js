@@ -6,10 +6,12 @@ import {
   Menu as MenuIcon,
   BarChart as BarChartIcon,
   AccountCircle as AccountCircleIcon,
+  Chat as ChatIcon,
 } from "@mui/icons-material";
 import EmailAnalyticsPage from "./pages/EmailAnalyticsPage";
 import ProfilePage from "./pages/ProfilePage";
 import AdminPage from "./pages/AdminPage";
+import AIChatPage from "./pages/AIChatPage";
 import LoginPage from "./pages/LoginPage";
 import { DataProvider } from "./context/DataContext";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -86,6 +88,7 @@ function AppLayout() {
 
   const baseMenuItems = [
     { text: "Email Analytics", icon: <EmailIcon />, path: "/email" },
+    { text: "AI Assistant", icon: <ChatIcon />, path: "/ai-chat" },
     { text: "Profile", icon: <AccountCircleIcon />, path: "/profile" },
   ];
 
@@ -262,6 +265,14 @@ function AppLayout() {
             element={
               <ProtectedRoute>
                 <AdminPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ai-chat"
+            element={
+              <ProtectedRoute>
+                <AIChatPage />
               </ProtectedRoute>
             }
           />
