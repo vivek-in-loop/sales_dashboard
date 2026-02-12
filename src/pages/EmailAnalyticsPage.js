@@ -79,6 +79,7 @@ import {
   runDataValidation,
   formatValidationReport,
 } from "../utils/dataChecker";
+import { dataApi } from "../utils/api";
 
 const metricOptions = [
   { value: "Views", label: "Views" },
@@ -131,6 +132,12 @@ function EmailAnalyticsPage() {
     sdrFilter: "all", // 'all' or specific SDR name
   });
   const [tableTab, setTableTab] = useState(0);
+  const [tablePage, setTablePage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [companyPage, setCompanyPage] = useState(0);
+  const [companiesPerPage, setCompaniesPerPage] = useState(10);
+  const [prospectPage, setProspectPage] = useState(0);
+  const [prospectsPerPage, setProspectsPerPage] = useState(10);
   const [validationReport, setValidationReport] = useState(null);
   const [showValidation, setShowValidation] = useState(false);
   const [companyDetailsOpen, setCompanyDetailsOpen] = useState(false);
@@ -140,11 +147,133 @@ function EmailAnalyticsPage() {
   const [prospectsMatrixOpen, setProspectsMatrixOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("section-overview");
   const [kpiInfoOpen, setKpiInfoOpen] = useState({ sendOpen: false, trackingData: false, contactMatch: false });
+  const [databaseSdrs, setDatabaseSdrs] = useState([]);
+  const [loadingDatabase, setLoadingDatabase] = useState(false);
+  const [downloadingSdr, setDownloadingSdr] = useState(null); // { sdrId, type: 'gmail'|'mailsuite' }
 
   const hasResults = Boolean(emailData.stats);
   const readySdrs = sdrs.every((sdr) => sdr.sendFile && sdr.openFile);
   const canProcess =
     mode === "upload" && !!contactsFile && readySdrs && !loading;
+
+  // Fetch SDRs and email analytics from database on mount
+  useEffect(() => {
+    const loadDatabaseData = async () => {
+      setLoadingDatabase(true);
+      try {
+        // Fetch all SDRs with their data counts
+        const allSdrs = await dataApi.getAllSdrs();
+        setDatabaseSdrs(allSdrs);
+
+        // Fetch all email analytics data
+        const analytics = await dataApi.getAllEmailAnalytics();
+        
+        // Convert database data to format expected by emailProcessor
+        if (analytics.gmail_send && analytics.mailsuite && analytics.contacts) {
+          // Convert Gmail send data to CSV format
+          const gmailSendCsv = Papa.unparse(
+            analytics.gmail_send.map(record => ({
+              "Recipient Name": record.recipient_name || "",
+              "Date": record.sent_date || "",
+              "Recipient Email": record.recipient_email || "",
+              "Domain": record.domain || "",
+              "Subject": record.subject || "",
+              "SDR_Name": record.sdr_name || ""
+            }))
+          );
+
+          // Convert MailSuite data to CSV format
+          const mailsuiteCsv = Papa.unparse(
+            analytics.mailsuite.map(record => ({
+              "Recipient": record.recipient || "",
+              "Sent": record.sent_date || "",
+              "Opens": record.opens || 0,
+              "Clicks": record.clicks || 0,
+              "Last Opened": record.last_opened || "",
+              "SDR_Name": record.sdr_name || ""
+            }))
+          );
+
+          // Convert contacts to CSV format
+          const contactsCsv = Papa.unparse(
+            analytics.contacts.map(contact => ({
+              "Email": contact.email || "",
+              "Company Name": contact.company_name || "",
+              "First Name": contact.first_name || "",
+              "Last Name": contact.last_name || "",
+              "Title": contact.title || "",
+              "Company URL": contact.company_url || "",
+              "Sales Status": contact.sales_status || "",
+              "Account Source": contact.account_source || "",
+              "Sub-Source": contact.sub_source || ""
+            }))
+          );
+
+          // Group Gmail send and MailSuite data by SDR
+          const sdrConfigs = allSdrs.map(sdr => {
+            const sdrGmailData = analytics.gmail_send.filter(r => 
+              (r.sdr_id?._id || r.sdr_id) === (sdr._id || sdr.id)
+            );
+            const sdrMailsuiteData = analytics.mailsuite.filter(r => 
+              (r.sdr_id?._id || r.sdr_id) === (sdr._id || sdr.id)
+            );
+
+            const sdrGmailCsv = Papa.unparse(
+              sdrGmailData.map(record => ({
+                "Recipient Name": record.recipient_name || "",
+                "Date": record.sent_date || "",
+                "Recipient Email": record.recipient_email || "",
+                "Domain": record.domain || "",
+                "Subject": record.subject || ""
+              }))
+            );
+
+            const sdrMailsuiteCsv = Papa.unparse(
+              sdrMailsuiteData.map(record => ({
+                "Recipient": record.recipient || "",
+                "Sent": record.sent_date || "",
+                "Opens": record.opens || 0,
+                "Clicks": record.clicks || 0,
+                "Last Opened": record.last_opened || ""
+              }))
+            );
+
+            return {
+              name: sdr.name || sdr.email || "Unknown",
+              sendCsv: sdrGmailData.length > 0 ? sdrGmailCsv : null,
+              openCsv: sdrMailsuiteData.length > 0 ? sdrMailsuiteCsv : null
+            };
+          }).filter(config => config.sendCsv && config.openCsv);
+
+          // Process the data if we have SDRs with both send and open data
+          if (sdrConfigs.length > 0 && contactsCsv) {
+            try {
+              const result = await processMultiSdrPipeline(
+                sdrConfigs,
+                contactsCsv,
+                { matchingMode: matchingMode }
+              );
+              setEmailData({
+                successful: result.successful || [],
+                failed: result.failed || [],
+                stats: result.stats || null,
+                sdrStats: result.sdrStats || []
+              });
+            } catch (processError) {
+              console.error("Error processing database data:", processError);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error loading database data:", err);
+        // Don't show error to user - they can still use upload mode
+      } finally {
+        setLoadingDatabase(false);
+      }
+    };
+
+    loadDatabaseData();
+  }, [matchingMode]); // Re-fetch when matching mode changes
 
   useEffect(() => {
     const handleScroll = () => {
@@ -186,6 +315,7 @@ function EmailAnalyticsPage() {
     }, 0);
 
     window.addEventListener("scroll", handleScroll, { passive: true });
+
     return () => {
       clearTimeout(timeoutId);
       window.removeEventListener("scroll", handleScroll);
@@ -213,6 +343,26 @@ function EmailAnalyticsPage() {
         updated[0] = { ...updated[0], openFile: file };
         return updated;
       });
+    }
+  };
+
+  const handleSdrDataDownload = async (sdrId, type) => {
+    const sdr = databaseSdrs.find((s) => (s._id || s.id) === sdrId);
+    const label = sdr?.name || sdr?.email || "SDR";
+    try {
+      setDownloadingSdr({ sdrId, type });
+      const csv = type === "gmail" ? await dataApi.getGmailSend(sdrId) : await dataApi.getMailSuite(sdrId);
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${type}-${label.replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(`Failed to download ${type} for ${label}:`, err);
+    } finally {
+      setDownloadingSdr(null);
     }
   };
 
@@ -943,216 +1093,197 @@ function EmailAnalyticsPage() {
     <Box
       sx={{
         minHeight: "100vh",
-        bgcolor: "#f1faee",
-        backgroundImage: "radial-gradient(circle at 20% 50%, rgba(69, 123, 157, 0.05) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(168, 218, 220, 0.05) 0%, transparent 50%)",
+        bgcolor: "#f8fafc",
+        backgroundImage: "radial-gradient(circle at 20% 50%, rgba(59, 130, 246, 0.03) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.03) 0%, transparent 50%)",
       }}
     >
       <Container maxWidth="xl" sx={{ py: 4 }}>
-        <Fade in timeout={400}>
-          <Paper
+        <div
             id="section-overview"
-            elevation={3}
-            sx={{
-              background: "linear-gradient(135deg, #1d3557 0%, #457b9d 70%, #a8dadc 100%)",
-              border: "1px solid rgba(241, 250, 238, 0.4)",
-              p: { xs: 2.5, md: 3 },
-              mb: 3,
-              borderRadius: 3,
-              position: "relative",
-              overflow: "hidden",
-              backdropFilter: "blur(6px)",
-              "&::before": {
-                content: '""',
-                position: "absolute",
-                top: -40,
-                right: -40,
-                width: 140,
-                height: 140,
-                borderRadius: "50%",
-                bgcolor: "rgba(255, 255, 255, 0.12)",
-              },
-              "&::after": {
-                content: '""',
-                position: "absolute",
-                bottom: -40,
-                left: -40,
-                width: 120,
-                height: 120,
-                borderRadius: "50%",
-                bgcolor: "rgba(255, 255, 255, 0.08)",
-              },
-            }}
-          >
-            <Stack
-              direction={{ xs: "column", md: "row" }}
-              justifyContent="space-between"
-              alignItems={{ xs: "flex-start", md: "center" }}
-              spacing={2.5}
-              sx={{ position: "relative", zIndex: 1 }}
-            >
-              <Box sx={{ maxWidth: { xs: "100%", md: 520 } }}>
-                <Typography
-                  variant="overline"
-                  sx={{
-                    color: "rgba(241, 250, 238, 0.9)",
-                    letterSpacing: 1,
-                    fontWeight: 600,
-                  }}
-                >
+          className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6 relative overflow-hidden"
+        >
+          {/* Decorative elements */}
+          <div className="absolute -top-8 -right-8 w-24 h-24 rounded-full bg-blue-50 opacity-40"></div>
+          <div className="absolute -bottom-8 -left-8 w-20 h-20 rounded-full bg-blue-50 opacity-20"></div>
+          
+          <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="max-w-full md:max-w-lg">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
                   Email Analytics
-                </Typography>
-                <Typography
-                  variant="h5"
-                  gutterBottom
-                  sx={{ 
-                    fontWeight: 800, 
-                    color: "white", 
-                    mb: 0.5, 
-                    fontSize: { xs: "1.25rem", sm: "1.5rem" },
-                    whiteSpace: "nowrap"
-                  }}
-                >
+              </p>
+              <h1 className="text-xl md:text-2xl font-bold text-gray-900 whitespace-nowrap">
                   📊 Email Analytics Dashboard
-                </Typography>
-              </Box>
-              <Stack 
-                direction={{ xs: "column", sm: "row" }} 
-                spacing={1.5} 
-                sx={{ 
-                  width: "100%",
-                  justifyContent: { xs: "flex-start", sm: "flex-end" },
-                  alignItems: { xs: "stretch", sm: "center" }
-                }}
-              >
+              </h1>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
                 {/* Matching Mode Selector */}
-                <FormControl
-                  size="small"
-                  sx={{
-                    bgcolor: "rgba(255, 255, 255, 0.1)",
-                    borderRadius: 2,
-                    mb: 2,
-                    minWidth: { xs: "100%", sm: 280 },
-                    maxWidth: { xs: "100%", sm: 320 },
-                  }}
-                >
-                  <InputLabel
-                    sx={{
-                      color: "rgba(241, 250, 238, 0.85)",
-                      "&.Mui-focused": { color: "#f1faee" },
-                    }}
-                  >
+              <div className="relative">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                     Matching Algorithm
-                  </InputLabel>
-                  <Select
+                </label>
+                <select
                     value={matchingMode}
                     onChange={(e) => setMatchingMode(e.target.value)}
-                    label="Matching Algorithm"
-                    sx={{
-                      color: "#f1faee",
-                      "& .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "rgba(241, 250, 238, 0.3)",
-                      },
-                      "&:hover .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "rgba(241, 250, 238, 0.5)",
-                      },
-                      "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#f1faee",
-                      },
-                      "& .MuiSvgIcon-root": {
-                        color: "rgba(241, 250, 238, 0.7)",
-                      },
-                      "& .MuiSelect-select": {
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      },
-                    }}
-                    MenuProps={{
-                      PaperProps: {
-                        sx: {
-                          maxHeight: 400,
-                          "& .MuiMenuItem-root": {
-                            whiteSpace: "normal",
-                            fontSize: "0.875rem",
-                          },
-                        },
-                      },
-                    }}
+                  className="w-full sm:w-[280px] px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-no-repeat bg-right-3 bg-[length:12px] pr-8"
                   >
-                    <MenuItem value="email_only">
+                  <option value="email_only">
                       📧 Email Only (Fast, Highest Match Rate)
-                    </MenuItem>
-                    <MenuItem value="timestamp">
+                  </option>
+                  <option value="timestamp">
                       ⏱️ Email + Timestamp (0-60s, Most Precise)
-                    </MenuItem>
-                    <MenuItem value="hybrid">
+                  </option>
+                  <option value="hybrid">
                       🔄 Hybrid (Timestamp First, Then Email)
-                    </MenuItem>
-                    <MenuItem value="relaxed">
+                  </option>
+                  <option value="relaxed">
                       🤝 Relaxed (Timestamp → ±5m nearest → Email Fallback)
-                    </MenuItem>
-                    <MenuItem value="name_timestamp">
+                  </option>
+                  <option value="name_timestamp">
                       🧭 Name + Timestamp (0-60s, for name-only opens)
-                    </MenuItem>
-                    <MenuItem value="composite">
+                  </option>
+                  <option value="composite">
                       🚀 Composite (Email→Name+Subject→Subject→Name, ~85% coverage)
-                    </MenuItem>
-                  </Select>
-                </FormControl>
+                  </option>
+                </select>
+              </div>
 
-                <Button
-                  variant="contained"
-                  size="medium"
-                  startIcon={<UploadIcon />}
+              <button
                   onClick={() => setModalOpen(true)}
-                  sx={{
-                    bgcolor: "#e63946",
-                    color: "white",
-                    fontWeight: 700,
-                    py: 1,
-                    px: 3,
-                    borderRadius: 999,
-                    whiteSpace: "nowrap",
-                    boxShadow: "0 3px 12px rgba(230, 57, 70, 0.35)",
-                    "&:hover": {
-                      bgcolor: "#d62839",
-                      transform: "translateY(-1px)",
-                      boxShadow: "0 5px 16px rgba(230, 57, 70, 0.45)",
-                    },
-                    transition: "all 0.25s",
-                  }}
-                >
+                className="px-4 py-2 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-200 text-sm whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
                   Upload Data
-                </Button>
+              </button>
 
-                <Button
-                  variant="outlined"
-                  size="medium"
-                  startIcon={<SettingsIcon />}
+              <button
                   onClick={() => setToolsDialogOpen(true)}
-                  sx={{
-                    borderColor: "#457b9d",
-                    color: "#457b9d",
-                    fontWeight: 700,
-                    py: 1,
-                    px: 3,
-                    borderRadius: 999,
-                    whiteSpace: "nowrap",
-                    "&:hover": {
-                      borderColor: "#1d3557",
-                      color: "#1d3557",
-                      bgcolor: "rgba(69, 123, 157, 0.1)",
-                      transform: "translateY(-1px)",
-                    },
-                    transition: "all 0.25s",
-                  }}
-                >
+                className="px-4 py-2 border border-blue-600 text-blue-600 hover:border-blue-700 hover:text-blue-700 hover:bg-blue-50 font-semibold rounded-lg transition-all duration-200 text-sm whitespace-nowrap flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
                   Tools
-                </Button>
-              </Stack>
-            </Stack>
-          </Paper>
-        </Fade>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* SDRs from Database */}
+        {databaseSdrs.length > 0 && (
+          <div id="section-sdrs" className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center">
+                  <AccountCircle className="text-gray-600" style={{ fontSize: 20 }} />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">SDRs in Database</h2>
+                  <p className="text-xs text-gray-500">All SDRs with their email analytics data counts</p>
+                </div>
+              </div>
+              <span className="px-3 py-1 bg-gray-900 text-white font-semibold rounded-lg text-sm">
+                {databaseSdrs.length} SDR{databaseSdrs.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+
+            {/* SDR Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {databaseSdrs.map((sdr) => (
+                <div
+                  key={sdr._id || sdr.id}
+                  className="bg-white border border-gray-200 rounded-lg p-3 transition-all duration-200 hover:shadow-md hover:border-gray-300"
+                >
+                  <div className="space-y-2">
+                    {/* SDR Profile Picture, Name and Email */}
+                    <div className="flex items-center gap-2">
+                      {sdr.picture ? (
+                        <img
+                          src={sdr.picture}
+                          alt={sdr.name || sdr.email || "SDR"}
+                          className="w-8 h-8 rounded-full object-cover border border-gray-200"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = '';
+                            e.target.style.display = 'none';
+                            const fallback = e.target.parentElement.querySelector('.avatar-fallback');
+                            if (fallback) fallback.style.display = 'flex';
+                          }}
+                        />
+                      ) : null}
+                      <div className={`flex items-center justify-center w-8 h-8 rounded-full bg-gray-100 border border-gray-200 avatar-fallback ${sdr.picture ? 'hidden' : 'flex'}`}>
+                        <span className="text-gray-600 font-semibold text-sm">
+                          {(sdr.name || sdr.email || "U")[0].toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-semibold text-gray-900 truncate">
+                          {sdr.name || sdr.email || "Unknown"}
+                        </h3>
+                        {sdr.email && (
+                          <p className="text-xs text-gray-500 truncate">{sdr.email}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100">
+                      <div>
+                        <p className="text-xs text-gray-500 mb-0.5">Gmail</p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-lg font-bold text-gray-900">
+                            {sdr.total_gmail_records?.toLocaleString() || 0}
+                          </p>
+                          {((sdr.calculated_gmail_count ?? sdr.total_gmail_records) || 0) > 0 && (
+                            <button
+                              onClick={() => handleSdrDataDownload(sdr._id || sdr.id, "gmail")}
+                              disabled={downloadingSdr?.type === "gmail" && downloadingSdr?.sdrId === (sdr._id || sdr.id)}
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition disabled:opacity-50"
+                              title="Download Gmail CSV"
+                            >
+                              <CloudDownload sx={{ fontSize: 18 }} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-0.5">MailSuite</p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-lg font-bold text-gray-900">
+                            {sdr.total_mailsuite_records?.toLocaleString() || 0}
+                          </p>
+                          {((sdr.calculated_mailsuite_count ?? sdr.total_mailsuite_records) || 0) > 0 && (
+                            <button
+                              onClick={() => handleSdrDataDownload(sdr._id || sdr.id, "mailsuite")}
+                              disabled={downloadingSdr?.type === "mailsuite" && downloadingSdr?.sdrId === (sdr._id || sdr.id)}
+                              className="p-1 text-purple-600 hover:bg-purple-50 rounded transition disabled:opacity-50"
+                              title="Download MailSuite CSV"
+                            >
+                              <CloudDownload sx={{ fontSize: 18 }} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Team Badge */}
+                    {sdr.team && (
+                      <div className="pt-1">
+                        <span className="inline-block px-2 py-0.5 bg-gray-100 text-gray-700 text-xs font-medium rounded">
+                          {sdr.team}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Data Validation Button */}
         {hasResults && validationReport && (
@@ -2413,157 +2544,74 @@ function EmailAnalyticsPage() {
             <Stack spacing={4}>
               {/* Filters Section - Moved to Top */}
               <Fade in timeout={400}>
-                <Card
+                <div
                   id="section-filters"
-                  elevation={3}
-                  sx={{
-                    background: "linear-gradient(135deg, #f1faee 0%, #a8dadc 100%)",
-                    border: "2px solid #457b9d",
-                    borderRadius: 3,
-                    transition: "all 0.3s ease-in-out",
-                    position: "relative",
-                    overflow: "hidden",
-                    "&:hover": {
-                      transform: "translateY(-3px)",
-                      boxShadow: "0 8px 24px rgba(69, 123, 157, 0.25)",
-                    },
-                    "&::before": {
-                      content: '""',
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: "4px",
-                      background: "linear-gradient(90deg, #457b9d 0%, #1d3557 100%)",
-                    },
-                  }}
+                  className="bg-white rounded-xl shadow-sm border border-gray-100 mb-6 relative overflow-hidden hover:shadow-md transition-all duration-300"
                 >
-                  <CardContent sx={{ pt: 3 }}>
-                    <Stack direction="row" alignItems="center" spacing={2} mb={2}>
-                      <Box
-                        sx={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 2,
-                          bgcolor: "white",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow: "0 4px 12px rgba(69, 123, 157, 0.3)",
-                        }}
-                      >
-                        <Typography sx={{ fontSize: 28 }}>🔍</Typography>
-                      </Box>
-                      <Box sx={{ flexGrow: 1 }}>
-                        <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
+                  {/* Top accent bar */}
+                  <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 via-blue-600 to-slate-700"></div>
+                  
+                  <div className="p-5">
+                    {/* Header */}
+                    <div className="flex items-center gap-3 mb-5">
+                      <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-50 to-slate-50 flex items-center justify-center border border-gray-100">
+                        <span className="text-lg">🔍</span>
+                      </div>
+                      <div className="flex-1">
+                        <h2 className="text-lg font-bold text-gray-900 mb-0.5 tracking-tight">
                           Advanced Analytics & Filtering
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: "#000000" }}>
+                        </h2>
+                        <p className="text-xs text-gray-500">
                           Analyze performance by week, month, or custom date ranges
-                        </Typography>
-                      </Box>
-                    </Stack>
-                    <Grid container spacing={2.5}>
-                      <Grid item xs={12} md={6}>
-                        <Box
-                          sx={{
-                            bgcolor: "white",
-                            p: 2,
-                            borderRadius: 2,
-                            border: "1px solid #E0E0E0",
-                            transition: "all 0.2s",
-                            "&:hover": {
-                              borderColor: "#457b9d",
-                              boxShadow: "0 2px 8px rgba(69, 123, 157, 0.15)",
-                            },
-                          }}
-                        >
-                          <Typography variant="caption" sx={{ color: "#616161", fontWeight: 600, mb: 1, display: "block" }}>
+                        </p>
+                      </div>
+                    </div>
+                    {/* Filters Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                      {/* Time Period */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                             📅 Time Period
-                          </Typography>
-                          <FormControl fullWidth size="small">
-                            <Select
+                        </label>
+                        <select
                               value={filters.timePeriod}
                               onChange={(e) =>
                                 setFilters((prev) => ({ ...prev, timePeriod: e.target.value }))
                               }
-                              sx={{
-                                "& .MuiOutlinedInput-notchedOutline": {
-                                  borderColor: "#E0E0E0",
-                                },
-                                "&:hover .MuiOutlinedInput-notchedOutline": {
-                                  borderColor: "#457b9d",
-                                },
-                              }}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300"
                             >
-                              <MenuItem value="day">📆 Daily</MenuItem>
-                              <MenuItem value="week">📊 Week-by-Week</MenuItem>
-                              <MenuItem value="month">📈 Month-by-Month</MenuItem>
-                            </Select>
-                          </FormControl>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Box
-                          sx={{
-                            bgcolor: "white",
-                            p: 2,
-                            borderRadius: 2,
-                            border: "1px solid #E0E0E0",
-                            transition: "all 0.2s",
-                            "&:hover": {
-                              borderColor: "#457b9d",
-                              boxShadow: "0 2px 8px rgba(69, 123, 157, 0.15)",
-                            },
-                          }}
-                        >
-                          <Typography variant="caption" sx={{ color: "#616161", fontWeight: 600, mb: 1, display: "block" }}>
+                          <option value="day">📆 Daily</option>
+                          <option value="week">📊 Week-by-Week</option>
+                          <option value="month">📈 Month-by-Month</option>
+                        </select>
+                      </div>
+
+                      {/* Metric */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                             📊 Metric
-                          </Typography>
-                          <FormControl fullWidth size="small">
-                            <Select
+                        </label>
+                        <select
                               value={filters.metric}
                               onChange={(e) =>
                                 setFilters((prev) => ({ ...prev, metric: e.target.value }))
                               }
-                              sx={{
-                                "& .MuiOutlinedInput-notchedOutline": {
-                                  borderColor: "#E0E0E0",
-                                },
-                                "&:hover .MuiOutlinedInput-notchedOutline": {
-                                  borderColor: "#457b9d",
-                                },
-                              }}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300"
                             >
                               {metricOptions.map((opt) => (
-                                <MenuItem key={opt.value} value={opt.value}>
+                            <option key={opt.value} value={opt.value}>
                                   {opt.label}
-                                </MenuItem>
+                            </option>
                               ))}
-                            </Select>
-                          </FormControl>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Box
-                          sx={{
-                            bgcolor: "white",
-                            p: 2,
-                            borderRadius: 2,
-                            border: "1px solid #E0E0E0",
-                            transition: "all 0.2s",
-                            "&:hover": {
-                              borderColor: "#457b9d",
-                              boxShadow: "0 2px 8px rgba(69, 123, 157, 0.15)",
-                            },
-                          }}
-                        >
-                          <Typography variant="caption" sx={{ color: "#616161", fontWeight: 600, mb: 1, display: "block" }}>
+                        </select>
+                      </div>
+
+                      {/* Start Date */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                             🗓️ Start Date
-                          </Typography>
-                          <TextField
-                            fullWidth
-                            size="small"
+                        </label>
+                        <input
                             type="date"
                             value={filters.dateRange?.start ? format(filters.dateRange.start, "yyyy-MM-dd") : ""}
                             onChange={(e) => {
@@ -2573,38 +2621,16 @@ function EmailAnalyticsPage() {
                                 dateRange: { ...prev.dateRange, start },
                               }));
                             }}
-                            InputLabelProps={{ shrink: true }}
-                            sx={{
-                              "& .MuiOutlinedInput-notchedOutline": {
-                                borderColor: "#E0E0E0",
-                              },
-                              "&:hover .MuiOutlinedInput-notchedOutline": {
-                                borderColor: "#457b9d",
-                              },
-                            }}
-                          />
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={6}>
-                        <Box
-                          sx={{
-                            bgcolor: "white",
-                            p: 2,
-                            borderRadius: 2,
-                            border: "1px solid #E0E0E0",
-                            transition: "all 0.2s",
-                            "&:hover": {
-                              borderColor: "#457b9d",
-                              boxShadow: "0 2px 8px rgba(69, 123, 157, 0.15)",
-                            },
-                          }}
-                        >
-                          <Typography variant="caption" sx={{ color: "#616161", fontWeight: 600, mb: 1, display: "block" }}>
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300"
+                        />
+                      </div>
+
+                      {/* End Date */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                             📆 End Date
-                          </Typography>
-                          <TextField
-                            fullWidth
-                            size="small"
+                        </label>
+                        <input
                             type="date"
                             value={filters.dateRange?.end ? format(filters.dateRange.end, "yyyy-MM-dd") : ""}
                             onChange={(e) => {
@@ -2614,48 +2640,27 @@ function EmailAnalyticsPage() {
                                 dateRange: { ...prev.dateRange, end },
                               }));
                             }}
-                            InputLabelProps={{ shrink: true }}
-                            sx={{
-                              "& .MuiOutlinedInput-notchedOutline": {
-                                borderColor: "#E0E0E0",
-                              },
-                              "&:hover .MuiOutlinedInput-notchedOutline": {
-                                borderColor: "#457b9d",
-                              },
-                            }}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300"
                           />
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Box
-                          sx={{
-                            bgcolor: "white",
-                            p: 2.5,
-                            borderRadius: 2,
-                            border: "1px solid #E0E0E0",
-                          }}
-                        >
-                          <Grid container spacing={2} alignItems="flex-end">
-                            <Grid item xs={12} sm={6} md={4}>
-                              <Typography variant="caption" sx={{ color: "#616161", fontWeight: 600, mb: 1, display: "block" }}>
+                      </div>
+                    </div>
+
+                    {/* SDR Filter, Search, and Reset */}
+                    <div className="bg-gradient-to-br from-slate-50/50 to-gray-50/30 p-4 rounded-lg border border-gray-100">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-3 items-end">
+                        {/* SDR Filter */}
+                        <div className="sm:col-span-1 md:col-span-4">
+                          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                                 👤 SDR Filter
-                              </Typography>
-                              <FormControl fullWidth size="small">
-                                <Select
+                          </label>
+                          <select
                                   value={filters.sdrFilter}
                                   onChange={(e) =>
                                     setFilters((prev) => ({ ...prev, sdrFilter: e.target.value }))
                                   }
-                                  sx={{
-                                    "& .MuiOutlinedInput-notchedOutline": {
-                                      borderColor: "#E0E0E0",
-                                    },
-                                    "&:hover .MuiOutlinedInput-notchedOutline": {
-                                      borderColor: "#457b9d",
-                                    },
-                                  }}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300"
                                 >
-                                  <MenuItem value="all">🌐 All SDRs</MenuItem>
+                            <option value="all">🌐 All SDRs</option>
                                   {Array.from(
                                     new Set(
                                       emailData.successful
@@ -2663,41 +2668,32 @@ function EmailAnalyticsPage() {
                                         .filter(Boolean)
                                     )
                                   ).map((sdr) => (
-                                    <MenuItem key={sdr} value={sdr}>
+                              <option key={sdr} value={sdr}>
                                       👤 {sdr}
-                                    </MenuItem>
+                              </option>
                                   ))}
-                                </Select>
-                              </FormControl>
-                            </Grid>
-                            <Grid item xs={12} sm={6} md={5}>
-                              <Typography variant="caption" sx={{ color: "#616161", fontWeight: 600, mb: 1, display: "block" }}>
+                          </select>
+                        </div>
+
+                        {/* Search */}
+                        <div className="sm:col-span-1 md:col-span-5">
+                          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
                                 🔎 Search
-                              </Typography>
-                              <TextField
-                                fullWidth
-                                size="small"
+                          </label>
+                          <input
+                            type="text"
                                 placeholder="Search by name, company, email..."
                                 value={filters.search}
                                 onChange={(e) =>
                                   setFilters((prev) => ({ ...prev, search: e.target.value }))
                                 }
-                                sx={{
-                                  "& .MuiOutlinedInput-notchedOutline": {
-                                    borderColor: "#E0E0E0",
-                                  },
-                                  "&:hover .MuiOutlinedInput-notchedOutline": {
-                                    borderColor: "#457b9d",
-                                  },
-                                }}
+                            className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm font-medium placeholder-gray-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all duration-200 hover:border-gray-300"
                               />
-                            </Grid>
-                            <Grid item xs={12} sm={12} md={3}>
-                              <Button
-                                fullWidth
-                                variant="contained"
-                                color="primary"
-                                size="medium"
+                        </div>
+
+                        {/* Reset Button */}
+                        <div className="sm:col-span-2 md:col-span-3">
+                          <button
                                 onClick={() =>
                                   setFilters({
                                     search: "",
@@ -2707,56 +2703,31 @@ function EmailAnalyticsPage() {
                                     sdrFilter: "all",
                                   })
                                 }
-                                sx={{
-                                  height: 40,
-                                  fontWeight: 600,
-                                  bgcolor: "#000000",
-                                  boxShadow: "0 4px 12px rgba(69, 123, 157, 0.3)",
-                                  "&:hover": {
-                                    bgcolor: "#000000",
-                                    boxShadow: "0 6px 16px rgba(69, 123, 157, 0.4)",
-                                    transform: "translateY(-2px)",
-                                  },
-                                  transition: "all 0.2s",
-                                }}
+                            className="w-full px-4 py-2 bg-gradient-to-r from-slate-900 to-slate-800 hover:from-slate-800 hover:to-slate-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-200 text-sm"
                               >
                                 🔄 Reset All
-                              </Button>
-                            </Grid>
-                          </Grid>
-                        </Box>
-                      </Grid>
-                    </Grid>
-                  </CardContent>
-                </Card>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </Fade>
 
               {/* Key Performance Indicators */}
-              <Fade in timeout={600}>
-                <Box id="section-kpis">
-                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-                    <Typography
-                      variant="h5"
-                      sx={{
-                        fontWeight: 700,
-                        color: "#000000",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                      }}
-                    >
+              <div id="section-kpis" className="opacity-100">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                  <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                       📊 Key Performance Indicators
-                    </Typography>
-                    <Button
-                      variant="outlined"
-                      size="small"
+                  </h2>
+                  <button
                       onClick={() => setPipelineReportOpen(true)}
-                      sx={{ textTransform: "none" }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
                     >
                       📊 Detailed Pipeline Report
-                    </Button>
-                  </Box>
-                  <Grid container spacing={2.5}>
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-5">
                       {[
                         { 
                           title: "Total Sends", 
@@ -2829,87 +2800,68 @@ function EmailAnalyticsPage() {
                           color: "success",
                         },
                       ].map((kpi, idx) => (
-                        <Grid item xs={12} sm={6} md={4} lg={2.4} key={kpi.title}>
-                          <Zoom in timeout={600} style={{ transitionDelay: `${kpi.delay}ms` }}>
-                            <Box>
+                      <div 
+                        key={kpi.title} 
+                        className="opacity-0 animate-fade-in-up"
+                        style={{ 
+                          animationDelay: `${kpi.delay}ms`,
+                          animationFillMode: 'forwards'
+                        }}
+                      >
                               <KpiCard
                                 title={kpi.title}
                                 value={kpi.value}
                                 helper={kpi.helper}
                                 color={kpi.color}
                               />
-                            </Box>
-                          </Zoom>
-                        </Grid>
+                      </div>
                       ))}
-                  </Grid>
-                </Box>
-              </Fade>
+                </div>
+              </div>
 
               {/* SDR Leaderboard - Top Section */}
               {sdrMatrix.length > 0 && (
-                <Grow in timeout={600}>
-                  <Box id="section-leaderboard">
-                    <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-                      <Box
-                        sx={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 2,
-                          bgcolor: "#f1faee",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          border: "2px solid #e63946",
-                        }}
-                      >
-                        <Leaderboard sx={{ fontSize: 26, color: "#e63946" }} />
-                      </Box>
-                      <Box sx={{ flexGrow: 1 }}>
-                        <Typography variant="h5" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
+                <div id="section-leaderboard" className="animate-fade-in-up">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="w-12 h-12 rounded-lg bg-green-50 border-2 border-red-500 flex items-center justify-center">
+                        <Leaderboard sx={{ fontSize: 24, color: "#e63946" }} />
+                      </div>
+                      <div className="flex-1">
+                        <h2 className="text-xl font-bold text-gray-900 mb-1">
                           SDR Leaderboard
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        </h2>
+                        <p className="text-sm text-gray-600">
                           Top performers ranked by engagement, views, and overall activity
-                        </Typography>
-                      </Box>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Chip
-                          label={`${sdrMatrix.length} SDRs Total`}
-                          sx={{
-                            bgcolor: "#000000",
-                            color: "white",
-                            fontWeight: 600,
-                            fontSize: "0.875rem",
-                            px: 1,
-                          }}
-                        />
-                        <Tooltip
-                          title={
-                            <Box>
-                              <Typography variant="caption" sx={{ display: "block", fontWeight: 700, mb: 0.5 }}>
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1.5 bg-gray-900 text-white font-semibold rounded-lg text-sm">
+                        {sdrMatrix.length} SDRs Total
+                      </span>
+                      <div className="relative group">
+                        <button className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                          <InfoOutlined sx={{ fontSize: 20 }} />
+                        </button>
+                        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-lg shadow-xl border border-gray-200 p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                          <p className="text-xs font-bold text-gray-900 mb-1">
                                 How rankings are calculated
-                              </Typography>
-                              <Typography variant="caption" sx={{ display: "block" }}>
+                          </p>
+                          <p className="text-xs text-gray-600 mb-1">
                                 Score = (Views × 0.4) + (Clicks × 0.3) + (High-engagement sends × 0.2) + (Engagement rate × 0.1).
-                              </Typography>
-                              <Typography variant="caption" sx={{ display: "block", mt: 0.5 }}>
+                          </p>
+                          <p className="text-xs text-gray-600">
                                 High-engagement send = email with Views ≥ 5. SDRs are sorted by this score (highest first).
-                              </Typography>
-                            </Box>
-                          }
-                          arrow
-                        >
-                          <IconButton size="small">
-                            <InfoOutlined sx={{ fontSize: 20, color: "text.secondary" }} />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </Stack>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
                     {/* Top 3 Podium Cards */}
                     {sdrMatrix.length >= 3 && (
-                      <Grid container spacing={3} sx={{ mb: 4 }}>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                           {[
                             { idx: 1, rank: 2 },
                             { idx: 0, rank: 1 },
@@ -2918,320 +2870,158 @@ function EmailAnalyticsPage() {
                             const sdr = sdrMatrix[idx];
                             const medalThemes = {
                               1: {
-                                bg: "#FFF9C4",
-                                border: "#FFD700",
-                                icon: "#F57F17",
-                                gradient: "linear-gradient(135deg, #FFF9C4 0%, #FFF59D 100%)",
-                                shadow: "0 8px 24px rgba(255, 215, 0, 0.3)",
+                                bg: "from-yellow-50 to-yellow-100",
+                                border: "border-yellow-400",
+                                icon: "text-yellow-700",
+                                badge: "bg-yellow-400",
+                                shadow: "shadow-yellow-400/30",
+                                hover: "hover:scale-105 hover:-translate-y-2",
                               },
                               2: {
-                                bg: "#F5F5F5",
-                                border: "#C0C0C0",
-                                icon: "#616161",
-                                gradient: "linear-gradient(135deg, #FAFAFA 0%, #EEEEEE 100%)",
-                                shadow: "0 6px 20px rgba(192, 192, 192, 0.3)",
+                                bg: "from-gray-50 to-gray-100",
+                                border: "border-gray-300",
+                                icon: "text-gray-600",
+                                badge: "bg-gray-300",
+                                shadow: "shadow-gray-300/30",
+                                hover: "hover:scale-105 hover:-translate-y-1",
                               },
                               3: {
-                                bg: "#FFE0B2",
-                                border: "#CD7F32",
-                                icon: "#E65100",
-                                gradient: "linear-gradient(135deg, #FFE0B2 0%, #FFCC80 100%)",
-                                shadow: "0 6px 20px rgba(205, 127, 50, 0.3)",
+                                bg: "from-orange-50 to-orange-100",
+                                border: "border-orange-400",
+                                icon: "text-orange-700",
+                                badge: "bg-orange-400",
+                                shadow: "shadow-orange-400/30",
+                                hover: "hover:scale-105 hover:-translate-y-1",
                               },
                             };
                             const theme = medalThemes[rank];
 
                             return (
-                              <Grid item xs={12} sm={4} key={sdr.sdr}>
-                                <Card
-                                  elevation={0}
-                                  sx={{
-                                    background: theme.gradient,
-                                    border: `3px solid ${theme.border}`,
-                                    borderRadius: 4,
-                                    transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-                                    position: "relative",
-                                    overflow: "visible",
-                                    "&:hover": {
-                                      transform: rank === 1 ? "scale(1.08) translateY(-8px)" : "scale(1.05) translateY(-6px)",
-                                      boxShadow: theme.shadow,
-                                    },
-                                    "&::before": {
-                                      content: '""',
-                                      position: "absolute",
-                                      top: -10,
-                                      right: -10,
-                                      width: 40,
-                                      height: 40,
-                                      borderRadius: "50%",
-                                      bgcolor: theme.border,
-                                      display: "flex",
-                                      alignItems: "center",
-                                      justifyContent: "center",
-                                      boxShadow: 2,
-                                    },
-                                  }}
-                                >
-                                  <CardContent sx={{ textAlign: "center", p: 3, pt: 4 }}>
-                                    <Box
-                                      sx={{
-                                        width: 64,
-                                        height: 64,
-                                        borderRadius: "50%",
-                                        bgcolor: theme.border,
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        mx: "auto",
-                                        mb: 2,
-                                        boxShadow: `0 4px 12px ${theme.border}40`,
-                                      }}
-                                    >
-                                      <Typography variant="h3" sx={{ fontWeight: 900, color: "white" }}>
-                                        {rank}
-                                      </Typography>
-                                    </Box>
-                                    <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
-                                      {sdr.sdr}
-                                    </Typography>
-                                    <Chip
-                                      label={`Score: ${Math.round(sdr.score).toLocaleString()}`}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "rgba(0,0,0,0.08)",
-                                        fontWeight: 600,
-                                        fontSize: "0.75rem",
-                                        mb: 2,
-                                      }}
-                                    />
-                                    <Grid container spacing={1.5} sx={{ mt: 1 }}>
-                                      <Grid item xs={6}>
-                                        <Box
-                                          sx={{
-                                            bgcolor: "rgba(255,255,255,0.7)",
-                                            borderRadius: 2,
-                                            p: 1.5,
-                                            border: "1px solid rgba(0,0,0,0.08)",
-                                          }}
-                                        >
-                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <Email sx={{ fontSize: 14, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                              Sends
-                                            </Typography>
-                                          </Stack>
-                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
-                                            {sdr.sends.toLocaleString()}
-                                          </Typography>
-                                        </Box>
-                                      </Grid>
-                                      <Grid item xs={6}>
-                                        <Box
-                                          sx={{
-                                            bgcolor: "rgba(255,255,255,0.7)",
-                                            borderRadius: 2,
-                                            p: 1.5,
-                                            border: "1px solid rgba(0,0,0,0.08)",
-                                          }}
-                                        >
-                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <AccountCircle sx={{ fontSize: 14, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                              Prospects
-                                            </Typography>
-                                          </Stack>
-                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
-                                            {sdr.totalProspects?.toLocaleString() || "0"}
-                                          </Typography>
-                                        </Box>
-                                      </Grid>
-                                      <Grid item xs={6}>
-                                        <Box
-                                          sx={{
-                                            bgcolor: "rgba(255,255,255,0.7)",
-                                            borderRadius: 2,
-                                            p: 1.5,
-                                            border: "1px solid rgba(0,0,0,0.08)",
-                                          }}
-                                        >
-                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <Visibility sx={{ fontSize: 14, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                              Views
-                                            </Typography>
-                                          </Stack>
-                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
-                                            {sdr.views.toLocaleString()}
-                                          </Typography>
-                                        </Box>
-                                      </Grid>
-                                      <Grid item xs={6}>
-                                        <Box
-                                          sx={{
-                                            bgcolor: "rgba(255,255,255,0.7)",
-                                            borderRadius: 2,
-                                            p: 1.5,
-                                            border: "1px solid rgba(0,0,0,0.08)",
-                                          }}
-                                        >
-                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <TouchApp sx={{ fontSize: 14, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                              Clicks
-                                            </Typography>
-                                          </Stack>
-                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
-                                            {sdr.clicks.toLocaleString()}
-                                          </Typography>
-                                        </Box>
-                                      </Grid>
-                                      <Grid item xs={6}>
-                                        <Box
-                                          sx={{
-                                            bgcolor: "rgba(255,255,255,0.7)",
-                                            borderRadius: 2,
-                                            p: 1.5,
-                                            border: "1px solid rgba(0,0,0,0.08)",
-                                          }}
-                                        >
-                                          <Stack direction="row" alignItems="center" justifyContent="center" spacing={0.5} mb={0.5}>
-                                            <TrendingUp sx={{ fontSize: 14, color: theme.icon }} />
-                                            <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                              High Eng.
-                                            </Typography>
-                                          </Stack>
-                                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
-                                            {sdr.highEngagement}
-                                          </Typography>
-                                        </Box>
-                                      </Grid>
-                                    </Grid>
-                                    <Box sx={{ mt: 2, p: 1.5, bgcolor: "rgba(255,255,255,0.7)", borderRadius: 2, border: "1px solid rgba(0,0,0,0.08)" }}>
-                                      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} mb={1}>
-                                        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                          Open Rate
-                                        </Typography>
-                                        <Typography variant="body2" sx={{ color: theme.icon, fontWeight: 700 }}>
-                                          {(sdr.openRate || sdr.engagementRate).toFixed(1)}%
-                                        </Typography>
-                                      </Stack>
-                                      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                                        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 600, fontSize: "0.7rem" }}>
-                                          Prospect Opened %
-                                        </Typography>
-                                        <Typography variant="body2" sx={{ color: theme.icon, fontWeight: 700 }}>
-                                          {(sdr.prospectOpenedRate || 0).toFixed(1)}%
-                                        </Typography>
-                                      </Stack>
-                                    </Box>
-                                    <Box sx={{ mt: 2 }}>
-                                      <Typography variant="caption" sx={{ color: "text.secondary", mb: 0.5, display: "block", fontWeight: 600 }}>
-                                        Open Rate
-                                      </Typography>
-                                      <LinearProgress
-                                        variant="determinate"
-                                        value={Math.min(sdr.openRate || sdr.engagementRate, 100)}
-                                        sx={{
-                                          height: 10,
-                                          borderRadius: 5,
-                                          bgcolor: "rgba(0,0,0,0.08)",
-                                          boxShadow: "inset 0 2px 4px rgba(0,0,0,0.1)",
-                                          "& .MuiLinearProgress-bar": {
-                                            bgcolor: theme.border,
-                                            borderRadius: 5,
-                                            boxShadow: `0 2px 8px ${theme.border}60`,
-                                          },
-                                        }}
-                                      />
-                                      <Typography variant="body2" sx={{ color: theme.icon, mt: 0.5, fontWeight: 700 }}>
-                                        {(sdr.openRate || sdr.engagementRate).toFixed(1)}%
-                                      </Typography>
-                                    </Box>
-                                  </CardContent>
-                                </Card>
-                              </Grid>
+                              <div key={sdr.sdr} className={`relative bg-gradient-to-br ${theme.bg} border-4 ${theme.border} rounded-2xl transition-all duration-300 ${theme.hover} ${rank === 1 ? 'shadow-lg' : 'shadow-md'} ${theme.shadow}`}>
+                                <div className={`absolute -top-3 -right-3 w-10 h-10 ${theme.badge} rounded-full shadow-lg flex items-center justify-center`}>
+                                  <span className="text-white text-xs font-bold">{rank === 1 ? '🥇' : rank === 2 ? '🥈' : '🥉'}</span>
+                                </div>
+                                <div className="text-center p-4 pt-6">
+                                  <div className={`w-16 h-16 ${theme.badge} rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg`}>
+                                    <span className="text-white text-3xl font-black">{rank}</span>
+                                  </div>
+                                  <h3 className="text-lg font-bold text-gray-900 mb-1">{sdr.sdr}</h3>
+                                  <span className="inline-block px-2 py-1 bg-black/10 text-gray-900 font-semibold rounded-lg text-xs mb-3">
+                                    Score: {Math.round(sdr.score).toLocaleString()}
+                                  </span>
+                                  <div className="grid grid-cols-2 gap-2 mt-3">
+                                    <div className="bg-white/70 rounded-lg p-2 border border-gray-200">
+                                      <div className="flex items-center justify-center gap-1 mb-1">
+                                        <Email sx={{ fontSize: 14, color: rank === 1 ? "#F57F17" : rank === 2 ? "#616161" : "#E65100" }} />
+                                        <span className="text-gray-600 font-semibold text-xs">Sends</span>
+                                      </div>
+                                      <p className="text-lg font-bold text-gray-900">{sdr.sends.toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-white/70 rounded-lg p-2 border border-gray-200">
+                                      <div className="flex items-center justify-center gap-1 mb-1">
+                                        <AccountCircle sx={{ fontSize: 14, color: rank === 1 ? "#F57F17" : rank === 2 ? "#616161" : "#E65100" }} />
+                                        <span className="text-gray-600 font-semibold text-xs">Prospects</span>
+                                      </div>
+                                      <p className="text-lg font-bold text-gray-900">{sdr.totalProspects?.toLocaleString() || "0"}</p>
+                                    </div>
+                                    <div className="bg-white/70 rounded-lg p-2 border border-gray-200">
+                                      <div className="flex items-center justify-center gap-1 mb-1">
+                                        <Visibility sx={{ fontSize: 14, color: rank === 1 ? "#F57F17" : rank === 2 ? "#616161" : "#E65100" }} />
+                                        <span className="text-gray-600 font-semibold text-xs">Views</span>
+                                      </div>
+                                      <p className="text-lg font-bold text-gray-900">{sdr.views.toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-white/70 rounded-lg p-2 border border-gray-200">
+                                      <div className="flex items-center justify-center gap-1 mb-1">
+                                        <TouchApp sx={{ fontSize: 14, color: rank === 1 ? "#F57F17" : rank === 2 ? "#616161" : "#E65100" }} />
+                                        <span className="text-gray-600 font-semibold text-xs">Clicks</span>
+                                      </div>
+                                      <p className="text-lg font-bold text-gray-900">{sdr.clicks.toLocaleString()}</p>
+                                    </div>
+                                    <div className="bg-white/70 rounded-lg p-2 border border-gray-200 col-span-2">
+                                      <div className="flex items-center justify-center gap-1 mb-1">
+                                        <TrendingUp sx={{ fontSize: 14, color: rank === 1 ? "#F57F17" : rank === 2 ? "#616161" : "#E65100" }} />
+                                        <span className="text-gray-600 font-semibold text-xs">High Eng.</span>
+                                      </div>
+                                      <p className="text-lg font-bold text-gray-900">{sdr.highEngagement}</p>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 p-2 bg-white/70 rounded-lg border border-gray-200">
+                                    <div className="flex justify-between items-center mb-1">
+                                      <span className="text-gray-600 font-semibold text-xs">Open Rate</span>
+                                      <span className={`${theme.icon} font-bold text-sm`}>{(sdr.openRate || sdr.engagementRate).toFixed(1)}%</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-gray-600 font-semibold text-xs">Prospect Opened %</span>
+                                      <span className={`${theme.icon} font-bold text-sm`}>{(sdr.prospectOpenedRate || 0).toFixed(1)}%</span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3">
+                                    <div className="flex justify-between items-center mb-1">
+                                      <span className="text-gray-600 font-semibold text-xs">Open Rate</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-2.5 shadow-inner">
+                                      <div 
+                                        className={`h-2.5 rounded-full ${rank === 1 ? 'bg-yellow-400' : rank === 2 ? 'bg-gray-400' : 'bg-orange-400'} shadow-sm`}
+                                        style={{ width: `${Math.min(sdr.openRate || sdr.engagementRate, 100)}%` }}
+                                      ></div>
+                                    </div>
+                                    <p className={`${theme.icon} font-bold text-sm mt-1`}>{(sdr.openRate || sdr.engagementRate).toFixed(1)}%</p>
+                                  </div>
+                                </div>
+                              </div>
                             );
                           })}
-                      </Grid>
+                      </div>
                     )}
 
                     {/* Full Leaderboard Table */}
-                    <Card
-                      elevation={2}
-                      sx={{
-                        bgcolor: "#FFFFFF",
-                        border: "1px solid #E0E0E0",
-                        borderRadius: 3,
-                        overflow: "hidden",
-                        transition: "all 0.3s",
-                        "&:hover": {
-                          boxShadow: 4,
-                        },
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          bgcolor: "#a8dadc",
-                          p: 2,
-                          borderBottom: "2px solid #457b9d",
-                        }}
-                      >
-                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                      <div className="p-5 border-b border-gray-100">
+                        <h3 className="text-xl font-bold text-gray-900 mb-1">
                           Complete Rankings
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                        </h3>
+                        <p className="text-sm text-gray-500">
                           All SDRs sorted by performance score
-                        </Typography>
-                      </Box>
-                      <TableContainer>
-                        <Table>
-                          <TableHead>
-                            <TableRow
-                              sx={{
-                                bgcolor: "#000000",
-                              }}
-                            >
-                              <TableCell sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>Rank</TableCell>
-                              <TableCell sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>SDR Name</TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
-                                  <Email fontSize="small" />
+                        </p>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-200">
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Rank</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">SDR Name</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Email sx={{ fontSize: 14, color: "#6B7280" }} />
                                   Sends
-                                </Stack>
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
-                                  <AccountCircle fontSize="small" />
+                                </div>
+                              </th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                <div className="flex items-center justify-end gap-1">
+                                  <AccountCircle sx={{ fontSize: 14, color: "#6B7280" }} />
                                   Prospects
-                                </Stack>
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
-                                  <Visibility fontSize="small" />
+                                </div>
+                              </th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Visibility sx={{ fontSize: 14, color: "#6B7280" }} />
                                   Views
-                                </Stack>
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
-                                  <TouchApp fontSize="small" />
+                                </div>
+                              </th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                <div className="flex items-center justify-end gap-1">
+                                  <TouchApp sx={{ fontSize: 14, color: "#6B7280" }} />
                                   Clicks
-                                </Stack>
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                Open Rate
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                Prospect Opened %
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                High Engagement
-                              </TableCell>
-                              <TableCell align="right" sx={{ fontWeight: 700, color: "white", fontSize: "0.875rem", py: 2 }}>
-                                Performance Score
-                              </TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
+                                </div>
+                              </th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Open Rate</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Prospect Opened %</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">High Engagement</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Performance Score</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
                             {sdrMatrix.slice(0, 10).map((sdr, idx) => {
                               const rank = idx + 1;
                               const isTopThree = rank <= 3;
@@ -3242,226 +3032,129 @@ function EmailAnalyticsPage() {
                               };
 
                               return (
-                                <TableRow
+                                <tr
                                   key={sdr.sdr}
-                                  sx={{
-                                    "&:hover": {
-                                      bgcolor: isTopThree ? "#a8dadc" : "#F5F5F5",
-                                      transform: "scale(1.01)",
-                                    },
-                                    transition: "all 0.3s",
-                                    borderLeft: isTopThree ? `5px solid ${medalColors[rank]}` : "5px solid transparent",
-                                    bgcolor: isTopThree ? "#FAFAFA" : "white",
+                                  className={`transition-all duration-300 hover:bg-gray-50 ${
+                                    isTopThree ? "bg-gray-50 border-l-4" : "border-l-4 border-transparent"
+                                  }`}
+                                  style={{
+                                    borderLeftColor: isTopThree ? medalColors[rank] : "transparent",
                                   }}
                                 >
-                                  <TableCell sx={{ py: 2 }}>
-                                    <Stack direction="row" spacing={1.5} alignItems="center">
+                                  <td className="px-4 py-3 whitespace-nowrap">
+                                    <div className="flex items-center gap-2">
                                       {isTopThree ? (
-                                        <Avatar
-                                          sx={{
-                                            bgcolor: medalColors[rank],
-                                            width: 40,
-                                            height: 40,
-                                            fontSize: "0.95rem",
-                                            fontWeight: 700,
-                                            color: "white",
+                                        <div
+                                          className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg"
+                                          style={{
+                                            backgroundColor: medalColors[rank],
                                             boxShadow: `0 4px 12px ${medalColors[rank]}60`,
                                           }}
                                         >
                                           {rank}
-                                        </Avatar>
+                                        </div>
                                       ) : (
-                                        <Box
-                                          sx={{
-                                            width: 40,
-                                            height: 40,
-                                            borderRadius: "50%",
-                                            bgcolor: "#F5F5F5",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                          }}
-                                        >
-                                          <Typography
-                                            sx={{
-                                              color: "text.secondary",
-                                              fontWeight: 600,
-                                              fontSize: "0.875rem",
-                                            }}
-                                          >
-                                            {rank}
-                                          </Typography>
-                                        </Box>
+                                        <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                                          <span className="text-gray-600 font-semibold text-sm">{rank}</span>
+                                        </div>
                                       )}
-                                    </Stack>
-                                  </TableCell>
-                                  <TableCell sx={{ py: 2 }}>
-                                    <Typography
-                                      sx={{
-                                        color: "text.primary",
-                                        fontWeight: isTopThree ? 700 : 500,
-                                        fontSize: "0.95rem",
-                                      }}
-                                    >
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap">
+                                    <span className={`text-gray-900 font-medium text-sm ${isTopThree ? "font-bold" : ""}`}>
                                       {sdr.sdr}
-                                    </Typography>
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Chip
-                                      icon={<Email sx={{ fontSize: 16 }} />}
-                                      label={sdr.sends.toLocaleString()}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#F5F5F5",
-                                        color: "#000000",
-                                        fontWeight: 600,
-                                        fontSize: "0.8rem",
-                                      }}
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Chip
-                                      icon={<AccountCircle sx={{ fontSize: 16 }} />}
-                                      label={sdr.totalProspects?.toLocaleString() || "0"}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#E8F5E9",
-                                        color: "#000000",
-                                        fontWeight: 600,
-                                        fontSize: "0.8rem",
-                                      }}
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Chip
-                                      icon={<Visibility sx={{ fontSize: 16 }} />}
-                                      label={sdr.views.toLocaleString()}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#a8dadc",
-                                        color: "#000000",
-                                        fontWeight: 600,
-                                        fontSize: "0.8rem",
-                                      }}
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Chip
-                                      icon={<TouchApp sx={{ fontSize: 16 }} />}
-                                      label={sdr.clicks.toLocaleString()}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#E0F7FA",
-                                        color: "#000000",
-                                        fontWeight: 600,
-                                        fontSize: "0.8rem",
-                                      }}
-                                    />
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Box sx={{ minWidth: 120 }}>
-                                      <Stack direction="row" alignItems="center" spacing={1} justifyContent="flex-end">
-                                        <Box sx={{ flexGrow: 1 }}>
-                                          <LinearProgress
-                                            variant="determinate"
-                                            value={Math.min(sdr.openRate || sdr.engagementRate, 100)}
-                                            sx={{
-                                              height: 8,
-                                              borderRadius: 4,
-                                              bgcolor: "#E0E0E0",
-                                              "& .MuiLinearProgress-bar": {
-                                                bgcolor: rank === 1 ? "#FFD700" : rank === 2 ? "#C0C0C0" : rank === 3 ? "#CD7F32" : "#4CAF50",
-                                                borderRadius: 4,
-                                              },
-                                            }}
-                                          />
-                                        </Box>
-                                        <Typography
-                                          variant="body2"
-                                          sx={{ color: "text.primary", fontWeight: 700, fontSize: "0.8rem", minWidth: 40 }}
-                                        >
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-900 font-semibold rounded-lg text-xs">
+                                      <Email sx={{ fontSize: 14 }} />
+                                      {sdr.sends.toLocaleString()}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-50 text-gray-900 font-semibold rounded-lg text-xs">
+                                      <AccountCircle sx={{ fontSize: 14 }} />
+                                      {sdr.totalProspects?.toLocaleString() || "0"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-100 text-gray-900 font-semibold rounded-lg text-xs">
+                                      <Visibility sx={{ fontSize: 14 }} />
+                                      {sdr.views.toLocaleString()}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 bg-cyan-50 text-gray-900 font-semibold rounded-lg text-xs">
+                                      <TouchApp sx={{ fontSize: 14 }} />
+                                      {sdr.clicks.toLocaleString()}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <div className="flex items-center justify-end gap-2 min-w-[120px]">
+                                      <div className="flex-1 bg-gray-200 rounded-full h-2">
+                                        <div
+                                          className={`h-2 rounded-full ${
+                                            rank === 1 ? "bg-yellow-500" : rank === 2 ? "bg-gray-400" : rank === 3 ? "bg-orange-500" : "bg-green-500"
+                                          }`}
+                                          style={{ width: `${Math.min(sdr.openRate || sdr.engagementRate, 100)}%` }}
+                                        ></div>
+                                      </div>
+                                      <span className="text-gray-900 font-bold text-xs min-w-[40px]">
                                           {(sdr.openRate || sdr.engagementRate).toFixed(1)}%
-                                        </Typography>
-                                      </Stack>
-                                    </Box>
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Box sx={{ minWidth: 120 }}>
-                                      <Stack direction="row" alignItems="center" spacing={1} justifyContent="flex-end">
-                                        <Box sx={{ flexGrow: 1 }}>
-                                          <LinearProgress
-                                            variant="determinate"
-                                            value={Math.min(sdr.prospectOpenedRate || 0, 100)}
-                                            sx={{
-                                              height: 8,
-                                              borderRadius: 4,
-                                              bgcolor: "#E0E0E0",
-                                              "& .MuiLinearProgress-bar": {
-                                                bgcolor: rank === 1 ? "#FFD700" : rank === 2 ? "#C0C0C0" : rank === 3 ? "#CD7F32" : "#9C27B0",
-                                                borderRadius: 4,
-                                              },
-                                            }}
-                                          />
-                                        </Box>
-                                        <Typography
-                                          variant="body2"
-                                          sx={{ color: "text.primary", fontWeight: 700, fontSize: "0.8rem", minWidth: 40 }}
-                                        >
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <div className="flex items-center justify-end gap-2 min-w-[120px]">
+                                      <div className="flex-1 bg-gray-200 rounded-full h-2">
+                                        <div
+                                          className={`h-2 rounded-full ${
+                                            rank === 1 ? "bg-yellow-500" : rank === 2 ? "bg-gray-400" : rank === 3 ? "bg-orange-500" : "bg-purple-500"
+                                          }`}
+                                          style={{ width: `${Math.min(sdr.prospectOpenedRate || 0, 100)}%` }}
+                                        ></div>
+                                      </div>
+                                      <span className="text-gray-900 font-bold text-xs min-w-[40px]">
                                           {(sdr.prospectOpenedRate || 0).toFixed(1)}%
-                                        </Typography>
-                                      </Stack>
-                                    </Box>
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
-                                      <Chip
-                                        label={`${sdr.highEngagement}`}
-                                        size="small"
-                                        sx={{
-                                          bgcolor: "#FFF3E0",
-                                          color: "#E65100",
-                                          fontWeight: 600,
-                                          fontSize: "0.75rem",
-                                        }}
-                                      />
-                                      <Typography
-                                        variant="caption"
-                                        sx={{ color: "text.secondary", fontSize: "0.75rem" }}
-                                      >
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <span className="px-2 py-1 bg-orange-50 text-orange-700 font-semibold rounded-lg text-xs">
+                                        {sdr.highEngagement}
+                                      </span>
+                                      <span className="text-gray-500 text-xs">
                                         ({sdr.highEngagementRate.toFixed(1)}%)
-                                      </Typography>
-                                    </Stack>
-                                  </TableCell>
-                                  <TableCell align="right" sx={{ py: 2 }}>
-                                    <Chip
-                                      label={Math.round(sdr.score).toLocaleString()}
-                                      size="medium"
-                                      sx={{
-                                        bgcolor: isTopThree ? "#FFF3E0" : "#F5F5F5",
-                                        color: isTopThree ? "#E65100" : "text.primary",
-                                        fontWeight: 700,
-                                        border: isTopThree ? "2px solid #6033d7" : "1px solid #E0E0E0",
-                                        fontSize: "0.85rem",
-                                        px: 1.5,
-                                      }}
-                                    />
-                                  </TableCell>
-                                </TableRow>
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-right">
+                                    <span
+                                      className={`inline-block px-3 py-1.5 font-bold rounded-lg text-sm ${
+                                        isTopThree
+                                          ? "bg-orange-50 text-orange-700 border-2 border-purple-600"
+                                          : "bg-gray-100 text-gray-900 border border-gray-300"
+                                      }`}
+                                    >
+                                      {Math.round(sdr.score).toLocaleString()}
+                                    </span>
+                                  </td>
+                                </tr>
                               );
                             })}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
+                          </tbody>
+                        </table>
+                      </div>
                       {sdrMatrix.length > 10 && (
-                        <Box sx={{ p: 2, textAlign: "center", borderTop: "1px solid #E0E0E0", bgcolor: "#FAFAFA" }}>
-                          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 500 }}>
+                        <div className="p-4 text-center border-t border-gray-100 bg-gray-50/50">
+                          <p className="text-xs text-gray-500 font-medium">
                             Showing top 10 of {sdrMatrix.length} SDRs • Ranked by performance score
-                          </Typography>
-                        </Box>
+                          </p>
+                        </div>
                       )}
-                    </Card>
-                  </Box>
-                </Grow>
+                    </div>
+                  </div>
               )}
 
               {/* {emailData.sdrStats?.length ? (
@@ -3512,69 +3205,29 @@ function EmailAnalyticsPage() {
 
 
               {/* Daily/Monthly Engagement Trend */}
-              <Grow in timeout={800}>
-                <Card
-                  id="section-trends"
-                  elevation={2}
-                  sx={{
-                    bgcolor: "#FFFFFF",
-                    border: "1px solid #E0E0E0",
-                    borderRadius: 3,
-                    overflow: "hidden",
-                    transition: "all 0.3s ease-in-out",
-                    "&:hover": {
-                      boxShadow: 4,
-                      transform: "translateY(-2px)",
-                    },
-                  }}
-                >
-                  <Box
-                    sx={{
-                      bgcolor: "#a8dadc",
-                      p: 2,
-                      borderBottom: "2px solid #457b9d",
-                    }}
-                  >
-                    <Stack
-                      direction={{ xs: "column", sm: "row" }}
-                      alignItems={{ xs: "flex-start", sm: "center" }}
-                      justifyContent="space-between"
-                      spacing={2}
-                    >
-                      <Box>
-                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
+              <div id="section-trends" className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up">
+                <div className="p-5 border-b border-gray-100">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">
                           📈 Engagement Trend Analysis
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                      </h2>
+                      <p className="text-sm text-gray-500">
                           {filters.timePeriod === "week"
                             ? "Week-by-Week Performance Analysis"
                             : filters.timePeriod === "month"
                             ? "Month-by-Month Performance Analysis"
                             : "Daily Performance Analysis"}
-                        </Typography>
-                      </Box>
-                      <Chip
-                        label={`${filteredForAnalysis.length.toLocaleString()} records`}
-                        sx={{
-                          bgcolor: "white",
-                          color: "#000000",
-                          fontWeight: 600,
-                          border: "1px solid #457b9d",
-                        }}
-                        size="medium"
-                      />
-                    </Stack>
-                  </Box>
-                  <CardContent>
+                      </p>
+                    </div>
+                    <span className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg text-sm">
+                      {filteredForAnalysis.length.toLocaleString()} records
+                    </span>
+                  </div>
+                </div>
+                <div className="p-5">
                     {trendData.labels.length > 0 ? (
-                      <Box
-                        sx={{
-                          bgcolor: "#FAFAFA",
-                          borderRadius: 2,
-                          p: 2,
-                          border: "1px solid #E0E0E0",
-                        }}
-                      >
+                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
                         <Plot
                           data={[
                             {
@@ -3583,42 +3236,62 @@ function EmailAnalyticsPage() {
                               x: trendData.labels,
                               y: trendData.values,
                               marker: {
-                                color: filters.timePeriod === "week" ? "#FF9800" : filters.timePeriod === "month" ? "#E91E63" : "#457b9d",
-                                size: filters.timePeriod === "day" ? 8 : undefined,
+                                color: filters.timePeriod === "week" ? "#6366F1" : filters.timePeriod === "month" ? "#EC4899" : "#3B82F6",
+                                size: filters.timePeriod === "day" ? 6 : undefined,
+                                line: filters.timePeriod === "day" ? { color: "#1E40AF", width: 1.5 } : undefined,
                               },
-                              line: filters.timePeriod === "day" ? { shape: "spline", smoothing: 0.6, width: 2, color: "#000000" } : undefined,
+                            line: filters.timePeriod === "day" ? { 
+                              shape: "spline", 
+                              smoothing: 0.6, 
+                              width: 2.5, 
+                              color: "#3B82F6" 
+                            } : undefined,
                               fill: filters.timePeriod === "day" ? "tonexty" : undefined,
-                              fillcolor: filters.timePeriod === "day" ? "rgba(33, 150, 243, 0.1)" : undefined,
+                            fillcolor: filters.timePeriod === "day" ? "rgba(59, 130, 246, 0.08)" : undefined,
                             },
                           ]}
                           layout={{
                             height: 450,
                             autosize: true,
-                            margin: { t: 30, r: 30, l: 60, b: 100 },
+                          margin: { t: 20, r: 20, l: 60, b: 80 },
                             paper_bgcolor: "transparent",
-                            plot_bgcolor: "#FFFFFF",
-                            font: { color: "#424242", family: "Inter, system-ui, sans-serif", size: 12 },
+                          plot_bgcolor: "transparent",
+                          font: { 
+                            color: "#6B7280", 
+                            family: "Inter, system-ui, sans-serif", 
+                            size: 11 
+                          },
                             xaxis: {
-                              tickangle: -90,
+                            tickangle: filters.timePeriod === "day" ? -45 : -90,
                               showgrid: true,
-                              gridcolor: "#E0E0E0",
-                              tickfont: { color: "#616161", size: 10 },
-                              title: { text: "Time Period", font: { color: "#424242", size: 13 } },
+                            gridcolor: "#E5E7EB",
+                            gridwidth: 1,
+                            tickfont: { color: "#9CA3AF", size: 10 },
+                            title: { 
+                              text: "Time Period", 
+                              font: { color: "#374151", size: 12, family: "Inter, system-ui, sans-serif" } 
+                            },
+                            linecolor: "#E5E7EB",
+                            linewidth: 1,
                             },
                             yaxis: {
                               showgrid: true,
-                              gridcolor: "#E0E0E0",
-                              tickfont: { color: "#616161", size: 11 },
+                            gridcolor: "#E5E7EB",
+                            gridwidth: 1,
+                            tickfont: { color: "#9CA3AF", size: 10 },
                               title: {
                                 text: filters.metric === "Views" ? "Views" : filters.metric === "Clicks" ? "Clicks" : "Count",
-                                font: { color: "#424242", size: 13 },
+                              font: { color: "#374151", size: 12, family: "Inter, system-ui, sans-serif" },
                               },
+                            linecolor: "#E5E7EB",
+                            linewidth: 1,
                             },
                             hovermode: "x unified",
                             hoverlabel: {
-                              bgcolor: "rgba(0,0,0,0.8)",
-                              bordercolor: "#000000",
-                              font: { color: "white" },
+                            bgcolor: "rgba(17, 24, 39, 0.9)",
+                            bordercolor: filters.timePeriod === "week" ? "#6366F1" : filters.timePeriod === "month" ? "#EC4899" : "#3B82F6",
+                            font: { color: "white", size: 11, family: "Inter, system-ui, sans-serif" },
+                            padding: 8,
                             },
                             showlegend: false,
                           }}
@@ -3627,93 +3300,52 @@ function EmailAnalyticsPage() {
                           config={{
                             displayModeBar: true,
                             displaylogo: false,
-                            modeBarButtonsToRemove: ["pan2d", "lasso2d"],
+                          modeBarButtonsToRemove: ["pan2d", "lasso2d", "select2d"],
                             toImageButtonOptions: {
                               format: "png",
                               filename: "engagement-trend",
                               height: 450,
                               width: 1200,
+                            scale: 2,
                             },
                           }}
                         />
-                      </Box>
+                    </div>
                     ) : (
-                      <Box
-                        sx={{
-                          height: 450,
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          bgcolor: "#FAFAFA",
-                          borderRadius: 2,
-                          border: "1px solid #E0E0E0",
-                        }}
-                      >
-                        <Typography variant="h6" sx={{ color: "#000000", mb: 1 }}>
+                    <div className="h-[450px] flex flex-col items-center justify-center bg-gray-50 rounded-lg border border-gray-100">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
                           No Data Available
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                      </h3>
+                      <p className="text-sm text-gray-500">
                           Try adjusting your filters or date range
-                        </Typography>
-                      </Box>
+                      </p>
+                    </div>
                     )}
-                  </CardContent>
-                </Card>
-              </Grow>
+                </div>
+              </div>
 
               {/* Week-by-Week Analysis Section */}
-              <Fade in timeout={1000}>
-                <Card
-                  id="section-tables"
-                  elevation={2}
-                  sx={{
-                    bgcolor: "#FFFFFF",
-                    border: "1px solid #E0E0E0",
-                    borderRadius: 3,
-                    overflow: "hidden",
-                    transition: "all 0.3s ease-in-out",
-                    "&:hover": {
-                      boxShadow: 4,
-                      transform: "translateY(-2px)",
-                    },
-                  }}
-                >
-                  <Box
-                    sx={{
-                      bgcolor: "#FFF3E0",
-                      p: 2,
-                      borderBottom: "2px solid #6033d7",
-                    }}
-                  >
-                    <Stack direction="row" alignItems="center" spacing={2}>
-                      <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000", flexGrow: 1 }}>
+              <div id="section-tables" className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up">
+                <div className="p-5 border-b border-gray-100">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">
                         📅 Week-by-Week Analysis
-                      </Typography>
-                      <Chip
-                        label="Detailed Weekly Breakdown"
-                        size="small"
-                        sx={{
-                          bgcolor: "white",
-                          color: "#000000",
-                          fontWeight: 600,
-                          border: "1px solid #FF9800",
-                        }}
-                      />
-                    </Stack>
-                  </Box>
-                  <CardContent>
+                      </h2>
+                      <p className="text-sm text-gray-500">
+                        Detailed weekly breakdown of performance metrics
+                      </p>
+                    </div>
+                    <span className="px-3 py-1.5 bg-white border border-gray-300 text-gray-700 font-semibold rounded-lg text-sm">
+                      Detailed Weekly Breakdown
+                    </span>
+                  </div>
+                </div>
+                <div className="p-5">
                     {(() => {
                       const weekData = buildTrend(filteredForAnalysis, filters.metric, "week", filters.dateRange);
                       return weekData.labels.length > 0 ? (
-                        <Box
-                          sx={{
-                            bgcolor: "#FAFAFA",
-                            borderRadius: 2,
-                            p: 2,
-                            border: "1px solid #E0E0E0",
-                          }}
-                        >
+                      <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
                           <Plot
                             data={[
                               {
@@ -3721,100 +3353,135 @@ function EmailAnalyticsPage() {
                                 x: weekData.labels,
                                 y: weekData.values,
                                 marker: {
-                                  color: "#FF9800",
-                                  line: { color: "#F57C00", width: 1 },
+                                color: "#6366F1",
+                                line: { color: "#4F46E5", width: 1.5 },
                                 },
                               },
                             ]}
                             layout={{
                               height: 400,
                               autosize: true,
-                              margin: { t: 20, r: 30, l: 60, b: 120 },
+                            margin: { t: 20, r: 20, l: 60, b: 100 },
                               paper_bgcolor: "transparent",
-                              plot_bgcolor: "#FFFFFF",
-                              font: { color: "#424242", family: "Inter, system-ui, sans-serif", size: 12 },
+                            plot_bgcolor: "transparent",
+                            font: { 
+                              color: "#6B7280", 
+                              family: "Inter, system-ui, sans-serif", 
+                              size: 11 
+                            },
                               xaxis: {
                                 tickangle: -45,
                                 showgrid: true,
-                                gridcolor: "#E0E0E0",
-                                tickfont: { color: "#616161", size: 10 },
-                                title: { text: "Week", font: { color: "#424242", size: 13 } },
+                              gridcolor: "#E5E7EB",
+                              gridwidth: 1,
+                              tickfont: { color: "#9CA3AF", size: 10 },
+                              title: { 
+                                text: "Week", 
+                                font: { color: "#374151", size: 12, family: "Inter, system-ui, sans-serif" } 
+                              },
+                              linecolor: "#E5E7EB",
+                              linewidth: 1,
                               },
                               yaxis: {
                                 showgrid: true,
-                                gridcolor: "#E0E0E0",
-                                tickfont: { color: "#616161", size: 11 },
+                              gridcolor: "#E5E7EB",
+                              gridwidth: 1,
+                              tickfont: { color: "#9CA3AF", size: 10 },
                                 title: {
                                   text: filters.metric === "Views" ? "Views" : filters.metric === "Clicks" ? "Clicks" : "Count",
-                                  font: { color: "#424242", size: 13 },
+                                font: { color: "#374151", size: 12, family: "Inter, system-ui, sans-serif" },
                                 },
+                              linecolor: "#E5E7EB",
+                              linewidth: 1,
                               },
                               hovermode: "x unified",
                               hoverlabel: {
-                                bgcolor: "rgba(0,0,0,0.8)",
-                                bordercolor: "#FF9800",
-                                font: { color: "white" },
+                              bgcolor: "rgba(17, 24, 39, 0.9)",
+                              bordercolor: "#6366F1",
+                              font: { color: "white", size: 11, family: "Inter, system-ui, sans-serif" },
+                              padding: 8,
                               },
+                            showlegend: false,
                             }}
                             style={{ width: "100%" }}
                             useResizeHandler
-                          />
-                        </Box>
-                      ) : (
-                        <Box sx={{ p: 3, textAlign: "center", bgcolor: "#FAFAFA", borderRadius: 2 }}>
-                          <Typography variant="body2" color="text.secondary">
+                          config={{
+                            displayModeBar: true,
+                            displaylogo: false,
+                            modeBarButtonsToRemove: ["pan2d", "lasso2d", "select2d"],
+                            toImageButtonOptions: {
+                              format: "png",
+                              filename: "week-by-week-analysis",
+                              height: 400,
+                              width: 1200,
+                              scale: 2,
+                            },
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="h-[400px] flex flex-col items-center justify-center bg-gray-50 rounded-lg border border-gray-100">
+                        <p className="text-sm text-gray-500">
                             No weekly data available
-                          </Typography>
-                        </Box>
+                        </p>
+                      </div>
                       );
                     })()}
-                  </CardContent>
-                </Card>
-              </Fade>
+                </div>
+              </div>
 
-              <Slide direction="up" in timeout={800}>
-                <Card
-                  elevation={2}
-                  sx={{
-                    bgcolor: "#FFFFFF",
-                    border: "1px solid #E0E0E0",
-                    borderRadius: 3,
-                    overflow: "hidden",
-                    transition: "all 0.3s ease-in-out",
-                    "&:hover": {
-                      boxShadow: 4,
-                      transform: "translateY(-2px)",
-                    },
-                  }}
-                >
-                  <Box
-                    sx={{
-                      bgcolor: "#E0F7FA",
-                      p: 2,
-                      borderBottom: "2px solid #00BCD4",
-                    }}
-                  >
-                    <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up">
+                <div className="p-5 border-b border-gray-100">
+                  <h2 className="text-xl font-bold text-gray-900 mb-1">
                       📊 SDR Performance Matrix
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                  </h2>
+                  <p className="text-sm text-gray-500">
                       Detailed performance metrics for all SDRs
-                    </Typography>
-                  </Box>
-                  <CardContent>
-                    <DataTable
-                      columns={[
-                        { key: "sdr", label: "SDR / Owner" },
-                        { key: "sends", label: "Matched Sends" },
-                        { key: "views", label: "Views" },
-                        { key: "clicks", label: "Clicks" },
-                      ]}
-                      rows={sdrMatrix}
-                      emptyMessage="No SDR data available."
-                    />
-                  </CardContent>
-                </Card>
-              </Slide>
+                  </p>
+                </div>
+                <div className="p-5">
+                  {sdrMatrix.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <p className="text-sm text-gray-500">
+                        No SDR data available.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-200">
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">SDR / Owner</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Matched Sends</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Views</th>
+                              <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Clicks</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {sdrMatrix.map((row, idx) => (
+                              <tr key={`${row.sdr || ""}-${idx}`} className="hover:bg-gray-50 transition-colors">
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <span className="text-sm font-medium text-gray-900">{row.sdr || "-"}</span>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-right">
+                                  <span className="text-sm text-gray-900">{row.sends?.toLocaleString() || "0"}</span>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-right">
+                                  <span className="text-sm text-gray-900">{row.views?.toLocaleString() || "0"}</span>
+                                </td>
+                                <td className="px-4 py-3 whitespace-nowrap text-right">
+                                  <span className="text-sm text-gray-900">{row.clicks?.toLocaleString() || "0"}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
 
               {/* Company Engagement Analysis */}
@@ -3848,168 +3515,87 @@ function EmailAnalyticsPage() {
                   </Stack>
 
                   {companyEngagement.highEngagementCompanies.length > 0 ? (
-                    <Card
-                      elevation={2}
-                      sx={{
-                        bgcolor: "#FFFFFF",
-                        borderRadius: 3,
-                        border: "2px solid #6033d7",
-                        overflow: "hidden",
-                        transition: "all 0.3s",
-                        "&:hover": {
-                          boxShadow: 6,
-                        },
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          bgcolor: "#E8EAF6",
-                          p: 2,
-                          borderBottom: "2px solid #6033d7",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 2,
-                        }}
-                      >
-                        <Box>
-                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                      <div className="p-5 border-b border-gray-100">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                          <div>
+                            <h2 className="text-xl font-bold text-gray-900 mb-1">
                             High Engagement Companies
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                            </h2>
+                            <p className="text-sm text-gray-500">
                             Companies with engagement rate &gt; 200%
-                          </Typography>
-                        </Box>
-                        <Stack direction="row" spacing={1}>
-                          <Button
-                            variant="outlined"
-                            size="small"
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
                             onClick={() => setCompanyMatrixOpen(true)}
+                              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                           >
                             View table
-                          </Button>
-                          <Button
-                            variant="contained"
-                            size="small"
-                            color="primary"
+                            </button>
+                            <button
                             onClick={handleExportHighEngagementCompanies}
+                              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                           >
                             Export
-                          </Button>
-                        </Stack>
-                      </Box>
-                      <Box sx={{ p: 2.25 }}>
-                        <Stack spacing={1.75}>
-                          {companyEngagement.highEngagementCompanies.map((company, idx) => (
-                            <Paper
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="p-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                          {companyEngagement.highEngagementCompanies.slice(companyPage * companiesPerPage, companyPage * companiesPerPage + companiesPerPage).map((company, idx) => (
+                            <div
                               key={company.company}
-                              elevation={0}
-                              sx={{
-                                p: 2,
-                                bgcolor: idx % 2 === 0 ? "#F5F5F5" : "#FFFFFF",
-                                borderRadius: 2,
-                                border: "1px solid #E0E0E0",
-                                borderLeft: "4px solidrgb(90, 162, 210)",
-                                transition: "all 0.3s ease-in-out",
-                                "&:hover": {
-                                  bgcolor: "#E8EAF6",
-                                  transform: "translateX(8px)",
-                                  borderLeftColor: "#6033d7",
-                                  boxShadow: "0 4px 16px rgba(255, 152, 0, 0.2)",
-                                },
-                              }}
+                              className="p-3 bg-white rounded-lg border border-gray-200 hover:border-gray-300 transition-all duration-200 hover:shadow-sm"
                             >
-                              <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "flex-start", sm: "center" }} spacing={1.75}>
-                                <Box
-                                  sx={{
-                                    width: 40,
-                                    height: 40,
-                                    borderRadius: 2,
-                                    bgcolor: "#E8EAF6",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    border: "2px solid #6033d7",
-                                    flexShrink: 0,
-                                  }}
-                                >
-                                  <Business sx={{ fontSize: 22, color: "#6033d7" }} />
-                                </Box>
-                                <Box sx={{ flexGrow: 1 }}>
-                                  <Stack direction="row" alignItems="center" spacing={1} mb={0.75}>
-                                    <Typography
-                                      variant="h6"
-                                      sx={{
-                                        fontWeight: 700,
-                                        fontSize: "1.05rem",
-                                        color: "#000000",
-                                      }}
-                                    >
+                              <div className="space-y-2">
+                                {/* Header: Icon, Company Name, Badges, and Stats */}
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                                    <div className="w-7 h-7 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center flex-shrink-0">
+                                      <Business sx={{ fontSize: 14, color: "#6B7280" }} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="text-sm font-bold text-gray-900 truncate mb-1">
                                       {company.company}
-                                    </Typography>
-                                    <Chip
-                                      label="HIGH"
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#6033d7",
-                                        color: "white",
-                                        fontWeight: 700,
-                                        fontSize: "0.7rem",
-                                        height: 24,
-                                      }}
-                                    />
-                                    <Chip
-                                      label={`${company.engagementRate.toFixed(0)}%`}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#E8EAF6",
-                                        color: "#000000",
-                                        fontWeight: 700,
-                                        border: "1px solidrgb(54, 173, 213)",
-                                        fontSize: "0.8rem",
-                                      }}
-                                    />
-                                  </Stack>
-                                  <Typography
-                                    variant="body1"
-                                    sx={{
-                                      color: "text.primary",
-                                      fontWeight: 500,
-                                      fontSize: "0.9rem",
-                                      lineHeight: 1.5,
-                                    }}
-                                  >
-                                    📧 <strong>{company.emails}</strong> {company.emails === 1 ? "email" : "emails"} │ 👁️{" "}
-                                    <strong>{company.views.toFixed(1)}</strong> views │ 🖱️ <strong>{company.clicks.toFixed(1)}</strong>{" "}
-                                    clicks │ 📊 <strong>{company.engagementRate.toFixed(1)}%</strong> rate
-                                  </Typography>
-                                  <Box sx={{ mt: 1 }}>
-                                    <LinearProgress
-                                      variant="determinate"
-                                      value={Math.min((company.engagementRate / 20) * 100, 100)}
-                                      sx={{
-                                        height: 8,
-                                        borderRadius: 4,
-                                        bgcolor: "#E0E0E0",
-                                        boxShadow: "inset 0 1px 3px rgba(0,0,0,0.1)",
-                                        "& .MuiLinearProgress-bar": {
-                                          bgcolor: "#6033d7",
-                                          borderRadius: 4,
-                                          boxShadow: "0 2px 8px rgba(255, 152, 0, 0.4)",
-                                        },
-                                      }}
-                                    />
-                                  </Box>
-                                  <Box
-                                    sx={{
-                                      mt: 2,
-                                      display: "flex",
-                                      justifyContent: "flex-end",
-                                    }}
-                                  >
-                                    <Button
-                                      variant="outlined"
-                                      size="small"
+                                      </h3>
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span className="px-1.5 py-0.5 bg-purple-600 text-white font-semibold rounded text-xs">
+                                          HIGH
+                                        </span>
+                                        <span className="px-1.5 py-0.5 bg-gray-100 text-gray-900 font-semibold border border-gray-300 rounded text-xs">
+                                          {company.engagementRate.toFixed(0)}%
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-1.5 justify-end flex-shrink-0">
+                                    <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-700 font-semibold rounded-full text-xs flex items-center gap-1">
+                                      <span>📧</span>
+                                      <span>{company.emails}</span>
+                                    </span>
+                                    <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-700 font-semibold rounded-full text-xs flex items-center gap-1">
+                                      <span>👁️</span>
+                                      <span>{company.views.toFixed(1)}</span>
+                                    </span>
+                                    <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-700 font-semibold rounded-full text-xs flex items-center gap-1">
+                                      <span>🖱️</span>
+                                      <span>{company.clicks.toFixed(1)}</span>
+                                    </span>
+                                  </div>
+                                </div>
+                                {/* Progress Bar */}
+                                <div>
+                                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                    <div
+                                      className="bg-indigo-600 h-1.5 rounded-full"
+                                      style={{ width: `${Math.min((company.engagementRate / 20) * 100, 100)}%` }}
+                                    ></div>
+                                  </div>
+                                </div>
+                                {/* Know More Button */}
+                                <button
                                       onClick={() => {
                                         const key = company.company
                                           ? String(company.company).toLowerCase().trim()
@@ -4019,55 +3605,100 @@ function EmailAnalyticsPage() {
                                         setSelectedCompanyLabel(company.company);
                                         setCompanyDetailsOpen(true);
                                       }}
+                                  className="w-full px-3 py-1 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                                     >
                                       Know more
-                                    </Button>
-                                  </Box>
-                                </Box>
-                              </Stack>
-                            </Paper>
+                                </button>
+                              </div>
+                            </div>
                           ))}
-                        </Stack>
-                      </Box>
-                    </Card>
+                        </div>
+                        {/* Pagination */}
+                        {companyEngagement.highEngagementCompanies.length > companiesPerPage && (
+                          <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
+                            <div className="flex flex-1 justify-between sm:hidden">
+                              <button
+                                onClick={() => setCompanyPage(Math.max(0, companyPage - 1))}
+                                disabled={companyPage === 0}
+                                className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Previous
+                              </button>
+                              <button
+                                onClick={() => setCompanyPage(Math.min(Math.ceil(companyEngagement.highEngagementCompanies.length / companiesPerPage) - 1, companyPage + 1))}
+                                disabled={companyPage >= Math.ceil(companyEngagement.highEngagementCompanies.length / companiesPerPage) - 1}
+                                className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Next
+                              </button>
+                            </div>
+                            <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm text-gray-700">
+                                  Showing <span className="font-medium">{companyPage * companiesPerPage + 1}</span> to{" "}
+                                  <span className="font-medium">
+                                    {Math.min((companyPage + 1) * companiesPerPage, companyEngagement.highEngagementCompanies.length)}
+                                  </span>{" "}
+                                  of <span className="font-medium">{companyEngagement.highEngagementCompanies.length}</span> companies
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <label className="text-sm text-gray-700">Per page:</label>
+                                <select
+                                  value={companiesPerPage}
+                                  onChange={(e) => {
+                                    setCompaniesPerPage(Number(e.target.value));
+                                    setCompanyPage(0);
+                                  }}
+                                  className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                >
+                                  <option value={6}>6</option>
+                                  <option value={9}>9</option>
+                                  <option value={12}>12</option>
+                                  <option value={18}>18</option>
+                                </select>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => setCompanyPage(Math.max(0, companyPage - 1))}
+                                    disabled={companyPage === 0}
+                                    className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Previous</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() => setCompanyPage(Math.min(Math.ceil(companyEngagement.highEngagementCompanies.length / companiesPerPage) - 1, companyPage + 1))}
+                                    disabled={companyPage >= Math.ceil(companyEngagement.highEngagementCompanies.length / companiesPerPage) - 1}
+                                    className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Next</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   ) : (
-                    <Card
-                      elevation={2}
-                      sx={{
-                        bgcolor: "#FFFFFF",
-                        borderRadius: 3,
-                        border: "2px solid #E0E0E0",
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          p: 6,
-                          textAlign: "center",
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            width: 80,
-                            height: 80,
-                            borderRadius: "50%",
-                            bgcolor: "#F5F5F5",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            mx: "auto",
-                            mb: 2,
-                          }}
-                        >
-                          <Business sx={{ fontSize: 48, color: "#BDBDBD" }} />
-                        </Box>
-                        <Typography variant="h6" sx={{ color: "#000000", mb: 1, fontWeight: 600 }}>
+                    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                      <div className="p-12 text-center">
+                        <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                          <Business sx={{ fontSize: 40, color: "#9CA3AF" }} />
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
                           No High Engagement Companies Found
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        </h3>
+                        <p className="text-sm text-gray-500">
                           Companies with Views &gt; 2× Emails will appear here
-                        </Typography>
-                      </Box>
-                    </Card>
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </Box>
               </Fade>
@@ -4248,433 +3879,537 @@ function EmailAnalyticsPage() {
       </Dialog>
 
               {/* High Engagement Prospects */}
-              <Fade in timeout={1400}>
-                <Box id="section-prospects">
-                  <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-                    <Box
-                      sx={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: 3,
-                        bgcolor: "#E3F2FD",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        border: "2px solid #457b9d",
-                      }}
-                    >
-                      <TrendingUp sx={{ fontSize: 32, color: "#000000" }} />
-                    </Box>
-                    <Box sx={{ flexGrow: 1 }}>
-                      <Typography variant="h4" sx={{ fontWeight: 700, color: "#000000", mb: 0.5 }}>
+              <div id="section-prospects" className="animate-fade-in-up">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-14 h-14 rounded-xl bg-gray-50 border-2 border-gray-200 flex items-center justify-center">
+                      <TrendingUp sx={{ fontSize: 28, color: "#6B7280" }} />
+                    </div>
+                    <div className="flex-1">
+                      <h2 className="text-2xl font-bold text-gray-900 mb-1">
                         ⭐ High Engagement Prospects
-                      </Typography>
-                      <Typography variant="body1" sx={{ color: "text.secondary", lineHeight: 1.6 }}>
+                      </h2>
+                      <p className="text-sm text-gray-600">
                         📊 <strong>{highEngagementProspects.totalProspects.toLocaleString()}</strong> prospects analyzed •{" "}
                         <strong>{highEngagementProspects.highEngagementCount.toLocaleString()}</strong> high engagement prospects (Views &gt; 2×
                         Emails)
-                      </Typography>
-                    </Box>
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        variant="outlined"
-                        size="small"
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
                         onClick={() => setProspectsMatrixOpen(true)}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                       >
                         View table
-                      </Button>
-                      <Button
-                        variant="contained"
-                        size="small"
-                        color="primary"
+                    </button>
+                    <button
                         onClick={handleExportHighEngagementProspects}
+                      className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                       >
                         Export
-                      </Button>
-                    </Stack>
-                  </Stack>
+                    </button>
+                  </div>
+                </div>
 
                   {highEngagementProspects.highEngagementProspects.length > 0 ? (
-                    <Card
-                      elevation={2}
-                      sx={{
-                        bgcolor: "#FFFFFF",
-                        borderRadius: 3,
-                        border: "2px solid #457b9d",
-                        overflow: "hidden",
-                        transition: "all 0.3s",
-                        "&:hover": {
-                          boxShadow: 6,
-                        },
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          bgcolor: "#E3F2FD",
-                          p: 2,
-                          borderBottom: "2px solid #457b9d",
-                        }}
-                      >
-                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                  <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                    <div className="p-5 border-b border-gray-100">
+                      <h2 className="text-xl font-bold text-gray-900 mb-1">
                           High Engagement Prospects
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                      </h2>
+                      <p className="text-sm text-gray-500">
                           Prospects with engagement rate &gt; 200%
-                        </Typography>
-                      </Box>
-                      <Box sx={{ p: 3 }}>
-                        <Stack spacing={2.5}>
-                          {highEngagementProspects.highEngagementProspects.map((prospect, idx) => (
-                            <Paper
+                      </p>
+                    </div>
+                    <div className="p-5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                          {highEngagementProspects.highEngagementProspects.slice(prospectPage * prospectsPerPage, prospectPage * prospectsPerPage + prospectsPerPage).map((prospect, idx) => (
+                          <div
                               key={prospect.prospectKey}
-                              elevation={0}
-                              sx={{
-                                p: 3,
-                                bgcolor: idx % 2 === 0 ? "#FAFAFA" : "#FFFFFF",
-                                borderRadius: 2,
-                                border: "1px solid #E0E0E0",
-                                borderLeft: "4px solid #457b9d",
-                                transition: "all 0.3s ease-in-out",
-                                "&:hover": {
-                                  bgcolor: "#E3F2FD",
-                                  transform: "translateX(8px)",
-                                  borderLeftColor: "#1d3557",
-                                  boxShadow: "0 4px 16px rgba(69, 123, 157, 0.2)",
-                                },
-                              }}
-                            >
-                              <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "flex-start", sm: "center" }} spacing={2}>
-                                <Box
-                                  sx={{
-                                    width: 48,
-                                    height: 48,
-                                    borderRadius: 2,
-                                    bgcolor: "#E3F2FD",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    border: "2px solid #457b9d",
-                                    flexShrink: 0,
-                                  }}
-                                >
-                                  <TrendingUp sx={{ fontSize: 28, color: "#000000" }} />
-                                </Box>
-                                <Box sx={{ flexGrow: 1 }}>
-                                  <Stack direction="row" alignItems="center" spacing={1} mb={1} flexWrap="wrap">
-                                    <Typography
-                                      variant="h6"
-                                      sx={{
-                                        fontWeight: 700,
-                                        fontSize: "1.15rem",
-                                        color: "#000000",
-                                      }}
-                                    >
+                            className="p-4 bg-white rounded-lg border border-gray-200 hover:border-gray-300 transition-all duration-200 hover:shadow-sm"
+                          >
+                            <div className="space-y-2">
+                              {/* Header: Icon, Prospect Name, Badges, and Stats */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <div className="w-7 h-7 rounded-lg bg-gray-50 border border-gray-200 flex items-center justify-center flex-shrink-0">
+                                    <TrendingUp sx={{ fontSize: 14, color: "#6B7280" }} />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <h3 className="text-sm font-bold text-gray-900 truncate mb-1">
                                       {prospect.prospectName !== "N/A" ? prospect.prospectName : prospect.prospectEmail}
-                                    </Typography>
-                                    <Chip
-                                      label="HIGH"
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#000000",
-                                        color: "white",
-                                        fontWeight: 700,
-                                        fontSize: "0.7rem",
-                                        height: 24,
-                                      }}
-                                    />
-                                    <Chip
-                                      label={`${prospect.engagementRate.toFixed(0)}%`}
-                                      size="small"
-                                      sx={{
-                                        bgcolor: "#E3F2FD",
-                                        color: "#000000",
-                                        fontWeight: 700,
-                                        border: "1px solid #457b9d",
-                                        fontSize: "0.8rem",
-                                      }}
-                                    />
-                                  </Stack>
-                                  <Typography
-                                    variant="body2"
-                                    sx={{
-                                      color: "text.secondary",
-                                      mb: 1,
-                                      fontWeight: 500,
-                                    }}
-                                  >
+                                    </h3>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="px-1.5 py-0.5 bg-purple-600 text-white font-semibold rounded text-xs">
+                                        HIGH
+                                      </span>
+                                      <span className="px-1.5 py-0.5 bg-gray-100 text-gray-900 font-semibold border border-gray-300 rounded text-xs">
+                                        {prospect.engagementRate.toFixed(0)}%
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1.5 justify-end flex-shrink-0">
+                                  <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-700 font-semibold rounded-full text-xs flex items-center gap-1">
+                                    <span>📧</span>
+                                    <span>{prospect.emails}</span>
+                                  </span>
+                                  <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-700 font-semibold rounded-full text-xs flex items-center gap-1">
+                                    <span>👁️</span>
+                                    <span>{prospect.views.toFixed(1)}</span>
+                                  </span>
+                                  <span className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-700 font-semibold rounded-full text-xs flex items-center gap-1">
+                                    <span>🖱️</span>
+                                    <span>{prospect.clicks.toFixed(1)}</span>
+                                  </span>
+                                </div>
+                              </div>
+                              {/* Email and Company Info */}
+                              <p className="text-xs text-gray-600">
                                     📧 {prospect.prospectEmail} {prospect.company !== "Unknown" && `• 🏢 ${prospect.company}`}
-                                  </Typography>
-                                  <Typography
-                                    variant="body1"
-                                    sx={{
-                                      color: "text.primary",
-                                      fontWeight: 500,
-                                      fontSize: "0.95rem",
-                                      lineHeight: 1.8,
-                                    }}
-                                  >
-                                    📧 <strong>{prospect.emails}</strong> {prospect.emails === 1 ? "email" : "emails"} │ 👁️{" "}
-                                    <strong>{prospect.views.toFixed(1)}</strong> views │ 🖱️ <strong>{prospect.clicks.toFixed(1)}</strong>{" "}
-                                    clicks │ 📊 <strong>{prospect.engagementRate.toFixed(1)}%</strong> rate
-                                  </Typography>
-                                  <Box sx={{ mt: 1.5 }}>
-                                    <LinearProgress
-                                      variant="determinate"
-                                      value={Math.min((prospect.engagementRate / 20) * 100, 100)}
-                                      sx={{
-                                        height: 8,
-                                        borderRadius: 4,
-                                        bgcolor: "#E0E0E0",
-                                        boxShadow: "inset 0 1px 3px rgba(0,0,0,0.1)",
-                                        "& .MuiLinearProgress-bar": {
-                                          bgcolor: "#000000",
-                                          borderRadius: 4,
-                                          boxShadow: "0 2px 8px rgba(69, 123, 157, 0.4)",
-                                        },
-                                      }}
-                                    />
-                                  </Box>
-                                </Box>
-                              </Stack>
-                            </Paper>
+                              </p>
+                              {/* Progress Bar */}
+                              <div>
+                                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                                  <div
+                                    className="bg-indigo-600 h-1.5 rounded-full"
+                                    style={{ width: `${Math.min((prospect.engagementRate / 20) * 100, 100)}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                           ))}
-                        </Stack>
-                      </Box>
-                    </Card>
-                  ) : (
-                    <Card
-                      elevation={2}
-                      sx={{
-                        bgcolor: "#FFFFFF",
-                        borderRadius: 3,
-                        border: "2px solid #E0E0E0",
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          p: 6,
-                          textAlign: "center",
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            width: 80,
-                            height: 80,
-                            borderRadius: "50%",
-                            bgcolor: "#F5F5F5",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            mx: "auto",
-                            mb: 2,
-                          }}
-                        >
-                          <TrendingUp sx={{ fontSize: 48, color: "#BDBDBD" }} />
-                        </Box>
-                        <Typography variant="h6" sx={{ color: "#000000", mb: 1, fontWeight: 600 }}>
-                          No High Engagement Prospects Found
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                          Prospects with Views &gt; 2× Emails will appear here
-                        </Typography>
-                      </Box>
-                    </Card>
-                  )}
-                </Box>
-              </Fade>
+                        </div>
 
-              <Fade in timeout={1000}>
-                <Card
-                  id="detailed-records"
-                  elevation={2}
-                  sx={{
-                    bgcolor: "#FFFFFF",
-                    border: "1px solid #E0E0E0",
-                    borderRadius: 3,
-                    overflow: "hidden",
-                    transition: "all 0.3s ease-in-out",
-                    "&:hover": {
-                      boxShadow: 4,
-                      transform: "translateY(-2px)",
-                    },
-                  }}
-                >
-                  <Box
-                    sx={{
-                      bgcolor: "#E8F5E9",
-                      p: 2,
-                      borderBottom: "2px solid #4CAF50",
-                    }}
-                  >
-                    <Typography variant="h6" sx={{ fontWeight: 700, color: "#000000" }}>
+                        {/* Pagination */}
+                        {highEngagementProspects.highEngagementProspects.length > prospectsPerPage && (
+                          <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
+                            <div className="flex flex-1 justify-between sm:hidden">
+                              <button
+                                onClick={() => setProspectPage(Math.max(0, prospectPage - 1))}
+                                disabled={prospectPage === 0}
+                                className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Previous
+                              </button>
+                              <button
+                                onClick={() => setProspectPage(Math.min(Math.ceil(highEngagementProspects.highEngagementProspects.length / prospectsPerPage) - 1, prospectPage + 1))}
+                                disabled={prospectPage >= Math.ceil(highEngagementProspects.highEngagementProspects.length / prospectsPerPage) - 1}
+                                className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Next
+                              </button>
+                            </div>
+                            <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm text-gray-700">
+                                  Showing <span className="font-medium">{prospectPage * prospectsPerPage + 1}</span> to{" "}
+                                  <span className="font-medium">
+                                    {Math.min((prospectPage + 1) * prospectsPerPage, highEngagementProspects.highEngagementProspects.length)}
+                                  </span>{" "}
+                                  of <span className="font-medium">{highEngagementProspects.highEngagementProspects.length}</span> prospects
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <label htmlFor="prospects-per-page" className="text-sm text-gray-700">
+                                  Show:
+                                </label>
+                                <select
+                                  id="prospects-per-page"
+                                  value={prospectsPerPage}
+                                  onChange={(e) => {
+                                    setProspectsPerPage(Number(e.target.value));
+                                    setProspectPage(0);
+                                  }}
+                                  className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                >
+                                  <option value={5}>5</option>
+                                  <option value={10}>10</option>
+                                  <option value={20}>20</option>
+                                  <option value={50}>50</option>
+                                </select>
+                                <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+                                  <button
+                                    onClick={() => setProspectPage(Math.max(0, prospectPage - 1))}
+                                    disabled={prospectPage === 0}
+                                    className="relative inline-flex items-center rounded-l-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Previous</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() => setProspectPage(Math.min(Math.ceil(highEngagementProspects.highEngagementProspects.length / prospectsPerPage) - 1, prospectPage + 1))}
+                                    disabled={prospectPage >= Math.ceil(highEngagementProspects.highEngagementProspects.length / prospectsPerPage) - 1}
+                                    className="relative inline-flex items-center rounded-r-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Next</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </nav>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                  <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                    <div className="p-12 text-center">
+                      <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                        <TrendingUp sx={{ fontSize: 40, color: "#9CA3AF" }} />
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                          No High Engagement Prospects Found
+                      </h3>
+                      <p className="text-sm text-gray-500">
+                          Prospects with Views &gt; 2× Emails will appear here
+                      </p>
+                    </div>
+                  </div>
+                  )}
+              </div>
+
+              <div id="detailed-records" className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 animate-fade-in-up">
+                <div className="p-5 border-b border-gray-100">
+                  <h2 className="text-xl font-bold text-gray-900 mb-1">
                       📋 Detailed Records
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                  </h2>
+                  <p className="text-sm text-gray-500">
                       View successful and failed email processing records
-                    </Typography>
-                  </Box>
-                  <CardContent>
-                    <Tabs
-                      value={tableTab}
-                      onChange={(_, value) => setTableTab(value)}
-                      textColor="primary"
-                      indicatorColor="primary"
-                      sx={{
-                        mb: 2,
-                        "& .MuiTab-root": {
-                          fontWeight: 700,
-                          textTransform: "none",
-                          fontSize: "0.95rem",
-                          "&.Mui-selected": {
-                            color: "#000000",
-                          },
-                        },
-                        "& .MuiTabs-indicator": {
-                          height: 3,
-                          borderRadius: "3px 3px 0 0",
-                        },
-                      }}
+                  </p>
+                </div>
+                <div className="p-5">
+                  {/* Tabs */}
+                  <div className="border-b border-gray-200 mb-4">
+                    <div className="flex space-x-1">
+                      <button
+                        onClick={() => {
+                          setTableTab(0);
+                          setTablePage(0); // Reset to first page when switching tabs
+                        }}
+                        className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                          tableTab === 0
+                            ? "border-blue-600 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700"
+                        }`}
                     >
-                      <Tab
-                        label={
-                          <Stack direction="row" alignItems="center" spacing={1}>
+                        <div className="flex items-center gap-2">
                             <span>Successful</span>
-                            <Chip
-                              label={filteredSuccess.length.toLocaleString()}
-                              size="small"
-                              sx={{
-                                bgcolor: "#E8F5E9",
-                                color: "#000000",
-                                fontWeight: 700,
-                                height: 24,
-                              }}
-                            />
-                            <Button
-                              component="span"
-                              variant="contained"
-                              color="primary"
-                              size="small"
+                          <span className="px-2 py-0.5 bg-gray-100 text-gray-900 font-semibold rounded text-xs">
+                            {filteredSuccess.length.toLocaleString()}
+                          </span>
+                          <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 e.preventDefault();
                                 handleDownloadSuccessfulContacts();
                               }}
-                              sx={{ ml: 1 }}
+                            className="ml-2 px-3 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors"
                             >
                               Export CSV
-                            </Button>
-                          </Stack>
-                        }
-                      />
-                      <Tab
-                        label={
-                          <Stack direction="row" alignItems="center" spacing={1}>
+                          </button>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTableTab(1);
+                          setTablePage(0); // Reset to first page when switching tabs
+                        }}
+                        className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${
+                          tableTab === 1
+                            ? "border-blue-600 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
                             <span>Failed</span>
-                            <Chip
-                              label={filteredFailed.length.toLocaleString()}
-                              size="small"
-                              sx={{
-                                bgcolor: filteredFailed.length > 0 ? "#FFEBEE" : "#F5F5F5",
-                                color: filteredFailed.length > 0 ? "#C62828" : "text.secondary",
-                                fontWeight: 700,
-                                height: 24,
-                              }}
-                            />
-                            <Button
-                              component="span"
-                              variant="contained"
-                              color="error"
-                              size="small"
+                          <span className={`px-2 py-0.5 font-semibold rounded text-xs ${
+                            filteredFailed.length > 0
+                              ? "bg-red-50 text-red-700"
+                              : "bg-gray-100 text-gray-500"
+                          }`}>
+                            {filteredFailed.length.toLocaleString()}
+                          </span>
+                          <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 e.preventDefault();
                                 handleDownloadFailedContacts();
                               }}
-                              sx={{ ml: 1 }}
+                            className="ml-2 px-3 py-1 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700 transition-colors"
                             >
                               Export CSV
-                            </Button>
-                          </Stack>
-                        }
-                      />
-                    </Tabs>
-                 
+                          </button>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
 
-                    <Box mt={2}>
+                  {/* Table Content */}
+                  <div className="mt-4">
                       {tableTab === 0 ? (
-                        <DataTable
-                          columns={[
-                            { key: "recipient_name", label: "Recipient" },
-                            { key: "Recipient Email", label: "Recipient Email" },
-                            { key: "Company", label: "Company" },
-                            { key: "Views", label: "Views" },
-                            { key: "Clicks", label: "Clicks" },
-                          ]}
-                          rows={filteredSuccess}
-                          emptyMessage="No successful records match your filters."
-                        />
+                      filteredSuccess.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <p className="text-sm text-gray-500">
+                            No successful records match your filters.
+                          </p>
+                        </div>
                       ) : (
-                        <DataTable
-                          columns={[
-                            { key: "recipient_name", label: "Recipient" },
-                            { key: "Recipient Email", label: "Recipient Email" },
-                            { key: "failure_reason", label: "Failure Reason" },
-                          ]}
-                          rows={filteredFailed}
-                          emptyMessage="No failed records."
-                        />
-                      )}
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Fade>
-            </Stack>
+                        <>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                              <thead>
+                                <tr className="bg-gray-50 border-b border-gray-200">
+                                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Recipient</th>
+                                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Recipient Email</th>
+                                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
+                                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Views</th>
+                                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Clicks</th>
+                                </tr>
+                              </thead>
+                              <tbody className="bg-white divide-y divide-gray-200">
+                                {filteredSuccess.slice(tablePage * rowsPerPage, tablePage * rowsPerPage + rowsPerPage).map((row, idx) => (
+                                  <tr key={`success-${tablePage * rowsPerPage + idx}`} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span className="text-sm text-gray-900">{row.recipient_name || "-"}</span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span className="text-sm text-gray-900">{row["Recipient Email"] || row.recipient_email || "-"}</span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span className="text-sm text-gray-900">{row.Company || row["Company Name"] || "-"}</span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-right">
+                                      <span className="text-sm text-gray-900">{row.Views?.toLocaleString() || "0"}</span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-right">
+                                      <span className="text-sm text-gray-900">{row.Clicks?.toLocaleString() || "0"}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {/* Pagination */}
+                          <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
+                            <div className="flex flex-1 justify-between sm:hidden">
+                              <button
+                                onClick={() => setTablePage(Math.max(0, tablePage - 1))}
+                                disabled={tablePage === 0}
+                                className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Previous
+                              </button>
+                              <button
+                                onClick={() => setTablePage(Math.min(Math.ceil(filteredSuccess.length / rowsPerPage) - 1, tablePage + 1))}
+                                disabled={tablePage >= Math.ceil(filteredSuccess.length / rowsPerPage) - 1}
+                                className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Next
+                              </button>
+                            </div>
+                            <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm text-gray-700">
+                                  Showing <span className="font-medium">{tablePage * rowsPerPage + 1}</span> to{" "}
+                                  <span className="font-medium">
+                                    {Math.min((tablePage + 1) * rowsPerPage, filteredSuccess.length)}
+                                  </span>{" "}
+                                  of <span className="font-medium">{filteredSuccess.length}</span> results
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <label className="text-sm text-gray-700">Rows per page:</label>
+                                <select
+                                  value={rowsPerPage}
+                                  onChange={(e) => {
+                                    setRowsPerPage(Number(e.target.value));
+                                    setTablePage(0);
+                                  }}
+                                  className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                >
+                                  <option value={10}>10</option>
+                                  <option value={25}>25</option>
+                                  <option value={50}>50</option>
+                                  <option value={100}>100</option>
+                                </select>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => setTablePage(Math.max(0, tablePage - 1))}
+                                    disabled={tablePage === 0}
+                                    className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Previous</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() => setTablePage(Math.min(Math.ceil(filteredSuccess.length / rowsPerPage) - 1, tablePage + 1))}
+                                    disabled={tablePage >= Math.ceil(filteredSuccess.length / rowsPerPage) - 1}
+                                    className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Next</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )
+                    ) : (
+                      filteredFailed.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <p className="text-sm text-gray-500">
+                            No failed records.
+                          </p>
+                        </div>
           ) : (
-            <Card
-              elevation={2}
-              sx={{
-                minHeight: 480,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                bgcolor: "#FAFAFA",
-                border: "2px dashed #E0E0E0",
-                borderRadius: 3,
-              }}
-            >
-              <CardContent sx={{ textAlign: "center", p: 6 }}>
-                <Box
-                  sx={{
-                    width: 100,
-                    height: 100,
-                    borderRadius: "50%",
-                    bgcolor: "#a8dadc",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    mx: "auto",
-                    mb: 3,
-                    border: "3px solid #457b9d",
-                  }}
-                >
-                  <Typography variant="h2" sx={{ color: "#000000" }}>
-                    📊
-                  </Typography>
-                </Box>
-                <Typography variant="h5" gutterBottom sx={{ fontWeight: 700, color: "#000000", mb: 2 }}>
+                        <>
+                          <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                              <thead>
+                                <tr className="bg-gray-50 border-b border-gray-200">
+                                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Recipient</th>
+                                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Recipient Email</th>
+                                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Failure Reason</th>
+                                </tr>
+                              </thead>
+                              <tbody className="bg-white divide-y divide-gray-200">
+                                {filteredFailed.slice(tablePage * rowsPerPage, tablePage * rowsPerPage + rowsPerPage).map((row, idx) => (
+                                  <tr key={`failed-${tablePage * rowsPerPage + idx}`} className="hover:bg-gray-50 transition-colors">
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span className="text-sm text-gray-900">{row.recipient_name || "-"}</span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span className="text-sm text-gray-900">{row["Recipient Email"] || row.recipient_email || "-"}</span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span className="text-sm text-red-600">{row.failure_reason || "Unknown error"}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {/* Pagination */}
+                          <div className="flex items-center justify-between border-t border-gray-200 bg-white px-4 py-3 sm:px-6 mt-4">
+                            <div className="flex flex-1 justify-between sm:hidden">
+                              <button
+                                onClick={() => setTablePage(Math.max(0, tablePage - 1))}
+                                disabled={tablePage === 0}
+                                className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Previous
+                              </button>
+                              <button
+                                onClick={() => setTablePage(Math.min(Math.ceil(filteredFailed.length / rowsPerPage) - 1, tablePage + 1))}
+                                disabled={tablePage >= Math.ceil(filteredFailed.length / rowsPerPage) - 1}
+                                className="relative ml-3 inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Next
+                              </button>
+                            </div>
+                            <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm text-gray-700">
+                                  Showing <span className="font-medium">{tablePage * rowsPerPage + 1}</span> to{" "}
+                                  <span className="font-medium">
+                                    {Math.min((tablePage + 1) * rowsPerPage, filteredFailed.length)}
+                                  </span>{" "}
+                                  of <span className="font-medium">{filteredFailed.length}</span> results
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <label className="text-sm text-gray-700">Rows per page:</label>
+                                <select
+                                  value={rowsPerPage}
+                                  onChange={(e) => {
+                                    setRowsPerPage(Number(e.target.value));
+                                    setTablePage(0);
+                                  }}
+                                  className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                >
+                                  <option value={10}>10</option>
+                                  <option value={25}>25</option>
+                                  <option value={50}>50</option>
+                                  <option value={100}>100</option>
+                                </select>
+                                <div className="flex gap-1">
+                                  <button
+                                    onClick={() => setTablePage(Math.max(0, tablePage - 1))}
+                                    disabled={tablePage === 0}
+                                    className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Previous</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() => setTablePage(Math.min(Math.ceil(filteredFailed.length / rowsPerPage) - 1, tablePage + 1))}
+                                    disabled={tablePage >= Math.ceil(filteredFailed.length / rowsPerPage) - 1}
+                                    className="relative inline-flex items-center rounded-md border border-gray-300 bg-white px-2 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <span className="sr-only">Next</span>
+                                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                      <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Stack>
+          ) : loadingDatabase ? (
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm min-h-[480px] flex items-center justify-center">
+              <div className="text-center">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-blue-600 mb-4"></div>
+                <p className="text-sm font-medium text-gray-700">Loading dashboard data...</p>
+                <p className="text-xs text-gray-500 mt-2">Fetching analytics from database</p>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg border-2 border-dashed border-gray-200 shadow-sm min-h-[480px] flex items-center justify-center">
+              <div className="text-center max-w-lg px-6">
+                <div className="w-24 h-24 rounded-full bg-gray-50 border-2 border-gray-200 flex items-center justify-center mx-auto mb-6">
+                  <span className="text-5xl">📊</span>
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 mb-3">
                   Get Started with Email Analytics
-                </Typography>
-                <Typography variant="body1" color="textSecondary" sx={{ maxWidth: 500, mx: "auto", mb: 3 }}>
+                </h2>
+                <p className="text-sm text-gray-600 mb-6 leading-relaxed">
                   Upload your SDR Send, Open, and Contacts CSV files using the panel on the left, or load demo data to see the
                   dashboard in action.
-                </Typography>
-                <Stack direction="row" spacing={2} justifyContent="center">
-                  <Chip label="📧 Send CSV" sx={{ bgcolor: "#a8dadc", color: "#000000", fontWeight: 600 }} />
-                  <Chip label="👁️ Open CSV" sx={{ bgcolor: "#E0F7FA", color: "#000000", fontWeight: 600 }} />
-                  <Chip label="👥 Contacts CSV" sx={{ bgcolor: "#E8F5E9", color: "#000000", fontWeight: 600 }} />
-                </Stack>
-              </CardContent>
-            </Card>
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <span className="px-4 py-2 bg-gray-50 border border-gray-200 text-gray-700 font-semibold rounded-lg text-sm">
+                    📧 Send CSV
+                  </span>
+                  <span className="px-4 py-2 bg-gray-50 border border-gray-200 text-gray-700 font-semibold rounded-lg text-sm">
+                    👁️ Open CSV
+                  </span>
+                  <span className="px-4 py-2 bg-gray-50 border border-gray-200 text-gray-700 font-semibold rounded-lg text-sm">
+                    👥 Contacts CSV
+                  </span>
+                </div>
+              </div>
+            </div>
           )}
         </Box>
     </Container>

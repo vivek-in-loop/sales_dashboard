@@ -25,10 +25,10 @@
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
     <title>Sales Dashboard</title>
-    <!-- Google Identity Services (load first) -->
-    <script src="https://accounts.google.com/gsi/client"></script>
-    <!-- Google API Client Library -->
-    <script src="https://apis.google.com/js/api.js"></script>
+    <!-- Google API Client Library (required for Gmail API) -->
+    <script src="https://apis.google.com/js/api.js" async defer></script>
+    <!-- Google Identity Services (for OAuth) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
