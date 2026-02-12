@@ -253,6 +253,22 @@ export const dataApi = {
   },
 
   /**
+   * Get all Gmail send data as CSV dump
+   */
+  getGmailDump: async () => {
+    const response = await fetch(`${API_BASE_URL}/data/gmail-dump`, {
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('No Gmail data found');
+      }
+      throw new Error('Failed to fetch Gmail dump');
+    }
+    return response.text();
+  },
+
+  /**
    * Get Gmail send data as CSV
    */
   getGmailSend: async (sdrId) => {

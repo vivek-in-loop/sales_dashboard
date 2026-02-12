@@ -149,6 +149,7 @@ function EmailAnalyticsPage() {
   const [kpiInfoOpen, setKpiInfoOpen] = useState({ sendOpen: false, trackingData: false, contactMatch: false });
   const [databaseSdrs, setDatabaseSdrs] = useState([]);
   const [loadingDatabase, setLoadingDatabase] = useState(false);
+  const [downloadingSdr, setDownloadingSdr] = useState(null); // { sdrId, type: 'gmail'|'mailsuite' }
 
   const hasResults = Boolean(emailData.stats);
   const readySdrs = sdrs.every((sdr) => sdr.sendFile && sdr.openFile);
@@ -342,6 +343,26 @@ function EmailAnalyticsPage() {
         updated[0] = { ...updated[0], openFile: file };
         return updated;
       });
+    }
+  };
+
+  const handleSdrDataDownload = async (sdrId, type) => {
+    const sdr = databaseSdrs.find((s) => (s._id || s.id) === sdrId);
+    const label = sdr?.name || sdr?.email || "SDR";
+    try {
+      setDownloadingSdr({ sdrId, type });
+      const csv = type === "gmail" ? await dataApi.getGmailSend(sdrId) : await dataApi.getMailSuite(sdrId);
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${type}-${label.replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(`Failed to download ${type} for ${label}:`, err);
+    } finally {
+      setDownloadingSdr(null);
     }
   };
 
@@ -1213,15 +1234,39 @@ function EmailAnalyticsPage() {
                     <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100">
                       <div>
                         <p className="text-xs text-gray-500 mb-0.5">Gmail</p>
-                        <p className="text-lg font-bold text-gray-900">
-                          {sdr.total_gmail_records?.toLocaleString() || 0}
-                        </p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-lg font-bold text-gray-900">
+                            {sdr.total_gmail_records?.toLocaleString() || 0}
+                          </p>
+                          {((sdr.calculated_gmail_count ?? sdr.total_gmail_records) || 0) > 0 && (
+                            <button
+                              onClick={() => handleSdrDataDownload(sdr._id || sdr.id, "gmail")}
+                              disabled={downloadingSdr?.type === "gmail" && downloadingSdr?.sdrId === (sdr._id || sdr.id)}
+                              className="p-1 text-blue-600 hover:bg-blue-50 rounded transition disabled:opacity-50"
+                              title="Download Gmail CSV"
+                            >
+                              <CloudDownload sx={{ fontSize: 18 }} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div>
                         <p className="text-xs text-gray-500 mb-0.5">MailSuite</p>
-                        <p className="text-lg font-bold text-gray-900">
-                          {sdr.total_mailsuite_records?.toLocaleString() || 0}
-                        </p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-lg font-bold text-gray-900">
+                            {sdr.total_mailsuite_records?.toLocaleString() || 0}
+                          </p>
+                          {((sdr.calculated_mailsuite_count ?? sdr.total_mailsuite_records) || 0) > 0 && (
+                            <button
+                              onClick={() => handleSdrDataDownload(sdr._id || sdr.id, "mailsuite")}
+                              disabled={downloadingSdr?.type === "mailsuite" && downloadingSdr?.sdrId === (sdr._id || sdr.id)}
+                              className="p-1 text-purple-600 hover:bg-purple-50 rounded transition disabled:opacity-50"
+                              title="Download MailSuite CSV"
+                            >
+                              <CloudDownload sx={{ fontSize: 18 }} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 

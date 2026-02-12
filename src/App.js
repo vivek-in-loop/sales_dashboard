@@ -6,7 +6,6 @@ import {
   Menu as MenuIcon,
   BarChart as BarChartIcon,
   AccountCircle as AccountCircleIcon,
-  Chat as ChatIcon,
 } from "@mui/icons-material";
 import EmailAnalyticsPage from "./pages/EmailAnalyticsPage";
 import ProfilePage from "./pages/ProfilePage";
@@ -88,7 +87,7 @@ function AppLayout() {
 
   const baseMenuItems = [
     { text: "Email Analytics", icon: <EmailIcon />, path: "/email" },
-    { text: "AI Assistant", icon: <ChatIcon />, path: "/ai-chat" },
+    // { text: "AI Assistant", icon: <ChatIcon />, path: "/ai-chat" }, // Hidden
     { text: "Profile", icon: <AccountCircleIcon />, path: "/profile" },
   ];
 

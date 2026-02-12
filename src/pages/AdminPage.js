@@ -10,6 +10,7 @@ function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [debugInfo, setDebugInfo] = useState(null);
+  const [downloadingGmail, setDownloadingGmail] = useState(false);
 
   // Define allowed admin emails
   const adminEmails = [
@@ -44,6 +45,25 @@ function AdminPage() {
       setError("Failed to load SDR data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGmailDumpDownload = async () => {
+    try {
+      setDownloadingGmail(true);
+      setError("");
+      const csv = await dataApi.getGmailDump();
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gmail-dump-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "Failed to download Gmail dump");
+    } finally {
+      setDownloadingGmail(false);
     }
   };
 
@@ -98,6 +118,13 @@ function AdminPage() {
             <p className="text-gray-600">Manage SDRs and monitor upload activity</p>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={handleGmailDumpDownload}
+              disabled={downloadingGmail}
+              className="px-3 py-2 text-sm font-medium text-green-700 bg-green-100 border border-green-300 rounded-lg hover:bg-green-200 transition disabled:opacity-50"
+            >
+              {downloadingGmail ? "Downloading…" : "Export Gmail CSV"}
+            </button>
             <button
               onClick={loadDebugInfo}
               className="px-3 py-2 text-sm font-medium text-blue-700 bg-blue-100 border border-blue-300 rounded-lg hover:bg-blue-200 transition"
