@@ -272,6 +272,33 @@ export const dataApi = {
   },
 
   /**
+   * Get current user's saved upload filters (warmup, domains)
+   */
+  getUploadFilters: async () => {
+    const response = await fetch(`${API_BASE_URL}/data/upload-filters`, {
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to fetch upload filters');
+    return response.json();
+  },
+
+  /**
+   * Save current user's upload filters (warmup, domains)
+   */
+  saveUploadFilters: async (filters) => {
+    const response = await fetch(`${API_BASE_URL}/data/upload-filters`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        warmupFilter: filters?.warmupFilter ?? '',
+        domainsToSkip: filters?.domainsToSkip ?? '',
+      }),
+    });
+    if (!response.ok) throw new Error('Failed to save upload filters');
+    return response.json();
+  },
+
+  /**
    * Get all Gmail send data as CSV dump
    */
   getGmailDump: async () => {

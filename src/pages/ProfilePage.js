@@ -61,11 +61,12 @@ function ProfilePage() {
     selectedIndices: new Set(),
   });
 
-  // Pre-upload filters on tabs (exclude warmup, filter by domain)
-  const [uploadTabFilters, setUploadTabFilters] = useState({
-    gmail: { warmupFilter: '', domainsToSkip: '' },
-    mailsuite: { warmupFilter: '', domainsToSkip: '' },
-  });
+  // Pre-upload filters (common for Gmail and MailSuite, persisted to database)
+  const [uploadTabFilters, setUploadTabFilters] = useState({ warmupFilter: '', domainsToSkip: '' });
+  const [filtersSaved, setFiltersSaved] = useState(false);
+  const [filtersLoadError, setFiltersLoadError] = useState('');
+  const [savingFilters, setSavingFilters] = useState(false);
+  const [toast, setToast] = useState({ open: false, message: '', type: 'success' });
 
   // Gmail integration state
   const [gmailSignedIn, setGmailSignedIn] = useState(false);
@@ -101,6 +102,24 @@ function ProfilePage() {
       loadStats();
     }
   }, [userId]); // Only run when user ID changes
+
+  // Load saved upload filters from database when user is available
+  useEffect(() => {
+    if (!userId) return;
+    const loadFilters = async () => {
+      try {
+        setFiltersLoadError('');
+        const saved = await dataApi.getUploadFilters();
+        setUploadTabFilters({
+          warmupFilter: saved.warmupFilter || '',
+          domainsToSkip: saved.domainsToSkip || '',
+        });
+      } catch (_) {
+        // Silently fallback - user may not have token (email-only login)
+      }
+    };
+    loadFilters();
+  }, [userId]);
 
   // Check Gmail sign-in status periodically
   useEffect(() => {
@@ -395,6 +414,27 @@ function ProfilePage() {
     });
   };
 
+  const handleSaveUploadFilters = async () => {
+    setSavingFilters(true);
+    setFiltersLoadError('');
+    try {
+      await dataApi.saveUploadFilters({
+        warmupFilter: uploadTabFilters.warmupFilter || '',
+        domainsToSkip: uploadTabFilters.domainsToSkip || '',
+      });
+      setFiltersSaved(true);
+      setTimeout(() => setFiltersSaved(false), 2000);
+      setToast({ open: true, message: 'Filters saved successfully', type: 'success' });
+      setTimeout(() => setToast(t => ({ ...t, open: false })), 3000);
+    } catch (err) {
+      setFiltersLoadError(err.message || 'Failed to save filters');
+      setToast({ open: true, message: err.message || 'Failed to save filters', type: 'error' });
+      setTimeout(() => setToast(t => ({ ...t, open: false })), 4000);
+    } finally {
+      setSavingFilters(false);
+    }
+  };
+
   const handleGmailSendUpload = async () => {
     if (!gmailSendFile || (!user?._id && !user?.id)) {
       setUploadError({ ...uploadError, gmail: "Please select a file" });
@@ -403,8 +443,8 @@ function ProfilePage() {
     setUploadError({ ...uploadError, gmail: "" });
     try {
       const preview = await buildUploadPreview(gmailSendFile, 'gmail');
-      const warmup = (uploadTabFilters.gmail?.warmupFilter || '').trim();
-      const domains = uploadTabFilters.gmail?.domainsToSkip || '';
+      const warmup = (uploadTabFilters.warmupFilter || '').trim();
+      const domains = uploadTabFilters.domainsToSkip || '';
       preview.userFilterOverride = warmup;
       preview.domainsToSkip = domains;
       const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(
@@ -662,8 +702,8 @@ function ProfilePage() {
     setUploadError({ ...uploadError, mailsuite: "" });
     try {
       const preview = await buildUploadPreview(mailsuiteFile, 'mailsuite');
-      const warmup = (uploadTabFilters.mailsuite?.warmupFilter || '').trim();
-      const domains = uploadTabFilters.mailsuite?.domainsToSkip || '';
+      const warmup = (uploadTabFilters.warmupFilter || '').trim();
+      const domains = uploadTabFilters.domainsToSkip || '';
       preview.userFilterOverride = warmup;
       preview.domainsToSkip = domains;
       const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(
@@ -730,6 +770,29 @@ function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
+      {/* Toast notification */}
+      {toast.open && (
+        <div
+          className={`fixed bottom-6 right-6 z-[60] px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 transition-all duration-300 ${
+            toast.type === 'success'
+              ? 'bg-green-600 text-white'
+              : 'bg-red-600 text-white'
+          }`}
+          role="alert"
+        >
+          {toast.type === 'success' ? (
+            <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+            </svg>
+          )}
+          <span className="text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
       {/* Upload Preview Modal */}
       {uploadPreview.open && (
         <div className="fixed inset-0 z-50 bg-black/30">
@@ -1193,16 +1256,30 @@ function ProfilePage() {
 
                   {/* Pre-upload filters on tab */}
                   <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
-                    <p className="text-sm font-semibold text-gray-700">Pre-upload filters</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-gray-700">Pre-upload filters</p>
+                      <button
+                        type="button"
+                        onClick={handleSaveUploadFilters}
+                        disabled={savingFilters}
+                        className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 min-w-[80px] justify-center"
+                      >
+                        {savingFilters ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                            Saving...
+                          </>
+                        ) : (
+                          filtersSaved ? "✓ Saved" : "Save"
+                        )}
+                      </button>
+                    </div>
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Warmup filter (e.g. warmup, instantly)</label>
                       <input
                         type="text"
-                        value={uploadTabFilters.gmail?.warmupFilter || ''}
-                        onChange={(e) => setUploadTabFilters(prev => ({
-                          ...prev,
-                          gmail: { ...prev.gmail, warmupFilter: e.target.value }
-                        }))}
+                        value={uploadTabFilters.warmupFilter || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({ ...prev, warmupFilter: e.target.value }))}
                         placeholder="Enter string to exclude warmup emails from body"
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                       />
@@ -1210,16 +1287,17 @@ function ProfilePage() {
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Domains to exclude (one per line or comma-separated)</label>
                       <textarea
-                        value={uploadTabFilters.gmail?.domainsToSkip || ''}
-                        onChange={(e) => setUploadTabFilters(prev => ({
-                          ...prev,
-                          gmail: { ...prev.gmail, domainsToSkip: e.target.value }
-                        }))}
+                        value={uploadTabFilters.domainsToSkip || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({ ...prev, domainsToSkip: e.target.value }))}
                         placeholder="e.g. warmup.com, test.org"
                         rows={2}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-y"
                       />
                     </div>
+                    <p className="text-xs text-gray-500">Saved filters apply to both Gmail and MailSuite uploads. Stored in database.</p>
+                    {filtersLoadError && (
+                      <p className="text-xs text-red-600">{filtersLoadError}</p>
+                    )}
                   </div>
 
                   {/* Gmail Integration Section */}
@@ -1534,16 +1612,30 @@ function ProfilePage() {
 
                   {/* Pre-upload filters on tab */}
                   <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
-                    <p className="text-sm font-semibold text-gray-700">Pre-upload filters</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-gray-700">Pre-upload filters</p>
+                      <button
+                        type="button"
+                        onClick={handleSaveUploadFilters}
+                        disabled={savingFilters}
+                        className="px-3 py-1.5 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 min-w-[80px] justify-center"
+                      >
+                        {savingFilters ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                            Saving...
+                          </>
+                        ) : (
+                          filtersSaved ? "✓ Saved" : "Save"
+                        )}
+                      </button>
+                    </div>
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Warmup filter (e.g. warmup, instantly)</label>
                       <input
                         type="text"
-                        value={uploadTabFilters.mailsuite?.warmupFilter || ''}
-                        onChange={(e) => setUploadTabFilters(prev => ({
-                          ...prev,
-                          mailsuite: { ...prev.mailsuite, warmupFilter: e.target.value }
-                        }))}
+                        value={uploadTabFilters.warmupFilter || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({ ...prev, warmupFilter: e.target.value }))}
                         placeholder="Enter string to exclude warmup emails from body"
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
                       />
@@ -1551,16 +1643,17 @@ function ProfilePage() {
                     <div>
                       <label className="block text-xs text-gray-600 mb-1">Domains to exclude (one per line or comma-separated)</label>
                       <textarea
-                        value={uploadTabFilters.mailsuite?.domainsToSkip || ''}
-                        onChange={(e) => setUploadTabFilters(prev => ({
-                          ...prev,
-                          mailsuite: { ...prev.mailsuite, domainsToSkip: e.target.value }
-                        }))}
+                        value={uploadTabFilters.domainsToSkip || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({ ...prev, domainsToSkip: e.target.value }))}
                         placeholder="e.g. warmup.com, test.org"
                         rows={2}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-y"
                       />
                     </div>
+                    <p className="text-xs text-gray-500">Saved filters apply to both Gmail and MailSuite uploads. Stored in database.</p>
+                    {filtersLoadError && (
+                      <p className="text-xs text-red-600">{filtersLoadError}</p>
+                    )}
                   </div>
 
                   <div className="space-y-4">
