@@ -1,6 +1,6 @@
 import React from "react";
 
-function KpiCard({ title, value, helper, icon, color }) {
+function KpiCard({ title, value, helper, icon, color, onInfoClick }) {
   return (
     <div
       className="
@@ -13,14 +13,27 @@ function KpiCard({ title, value, helper, icon, color }) {
     >
       {/* Content */}
       <div className="flex flex-col h-full">
-        {/* Title */}
-        <h3 className="
-          text-gray-500
-          font-semibold text-xs uppercase tracking-wide
-          mb-3
-        ">
+        {/* Title with optional info button */}
+        <div className="flex items-center gap-1.5 mb-3">
+          <h3 className="
+            text-gray-500
+            font-semibold text-xs uppercase tracking-wide
+          ">
             {title}
-        </h3>
+          </h3>
+          {onInfoClick && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onInfoClick(); }}
+              className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition"
+              title="View records"
+              aria-label="View records"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          )}
+        </div>
         
         {/* Value */}
         <div className="

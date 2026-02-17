@@ -663,6 +663,30 @@ export function parseGmailMessage(message) {
   const SS = String(parsedDate.getSeconds()).padStart(2, '0');
   const formattedDate = `${dd}/${mm}/${yyyy} ${HH}:${MM}:${SS}`;
 
+  // Extract body for warmup filtering (backend filters by body content)
+  let body = '';
+  try {
+    const payload = message.payload;
+    const decodePart = (part) => {
+      if (!part?.body?.data) return '';
+      try {
+        return atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+      } catch {
+        return '';
+      }
+    };
+    if (payload.body?.data) {
+      body = decodePart(payload);
+    } else if (payload.parts && Array.isArray(payload.parts)) {
+      const parts = payload.parts
+        .filter(p => ['text/plain', 'text/html'].includes((p.mimeType || '').toLowerCase()))
+        .map(decodePart);
+      body = parts.join(' ');
+    }
+  } catch (_) {
+    body = '';
+  }
+
   return {
     'Recipient Name': recipientName || recipientEmail || '',
     'Date': formattedDate,
@@ -671,7 +695,8 @@ export function parseGmailMessage(message) {
     'Subject': subject || '',
     'Thread ID': threadId || '',
     'From': from || '',
-    'Message ID': messageId || ''
+    'Message ID': messageId || '',
+    'Body': body
   };
 }
 
@@ -685,7 +710,7 @@ export function convertToSendCSV(messages, onProgress) {
   if (!messages || messages.length === 0) {
     return Papa.unparse([], {
       header: true,
-      columns: ['Recipient Name', 'Date', 'Recipient Email', 'Domain', 'Subject', 'Thread ID']
+      columns: ['Recipient Name', 'Date', 'Recipient Email', 'Domain', 'Subject', 'Thread ID', 'Body']
     });
   }
   
@@ -705,7 +730,8 @@ export function convertToSendCSV(messages, onProgress) {
         'Recipient Email': msg['Recipient Email'],
         'Domain': msg['Domain'],
         'Subject': msg['Subject'],
-        'Thread ID': msg['Thread ID']
+        'Thread ID': msg['Thread ID'],
+        'Body': msg['Body'] || ''
       }));
     
     rows.push(...chunkRows);
@@ -719,7 +745,7 @@ export function convertToSendCSV(messages, onProgress) {
   // Use PapaParse to convert to CSV
   return Papa.unparse(rows, {
     header: true,
-    columns: ['Recipient Name', 'Date', 'Recipient Email', 'Domain', 'Subject', 'Thread ID']
+    columns: ['Recipient Name', 'Date', 'Recipient Email', 'Domain', 'Subject', 'Thread ID', 'Body']
   });
 }
 
