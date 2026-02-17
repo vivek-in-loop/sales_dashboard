@@ -147,6 +147,7 @@ function EmailAnalyticsPage() {
   const [prospectsMatrixOpen, setProspectsMatrixOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("section-overview");
   const [kpiInfoOpen, setKpiInfoOpen] = useState({ sendOpen: false, trackingData: false, contactMatch: false });
+  const [kpiRecordsDialog, setKpiRecordsDialog] = useState(null); // 'totalSends' | 'totalProspects' | etc.
   const [databaseSdrs, setDatabaseSdrs] = useState([]);
   const [loadingDatabase, setLoadingDatabase] = useState(false);
   const [downloadingSdr, setDownloadingSdr] = useState(null); // { sdrId, type: 'gmail'|'mailsuite' }
@@ -2242,6 +2243,190 @@ function EmailAnalyticsPage() {
           </DialogActions>
         </Dialog>
 
+        {/* KPI Records Dialog - Tailwind table */}
+        {kpiRecordsDialog && (() => {
+          const recordsWithViews = (filteredSendOpen || []).filter(r => r.Views != null && r.Views !== '');
+          const config = {
+            totalSends: {
+              title: "Total Sends",
+              rows: filteredSendOpen || [],
+              columns: [
+                { key: "sent_date", label: "Send Date" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "SDR_Name", label: "SDR" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+              ],
+            },
+            totalProspects: {
+              title: "Total Prospects",
+              rows: filteredSendOpen || [],
+              columns: [
+                { key: "Recipient Email", label: "Email" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "sent_date", label: "Send Date" },
+                { key: "SDR_Name", label: "SDR" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+              ],
+            },
+            openRate: {
+              title: "Open Rate (Records with Views)",
+              rows: recordsWithViews,
+              columns: [
+                { key: "sent_date", label: "Send Date" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "SDR_Name", label: "SDR" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+              ],
+            },
+            openedProspects: {
+              title: "Opened Prospects",
+              rows: recordsWithViews,
+              columns: [
+                { key: "Recipient Email", label: "Email" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "sent_date", label: "Send Date" },
+                { key: "SDR_Name", label: "SDR" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+              ],
+            },
+            prospectOpenedPct: {
+              title: "Prospect Opened %",
+              rows: recordsWithViews,
+              columns: [
+                { key: "Recipient Email", label: "Email" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "Views", label: "Views" },
+                { key: "SDR_Name", label: "SDR" },
+              ],
+            },
+            totalViews: {
+              title: "Total Views",
+              rows: [...(filteredSendOpen || [])].sort((a, b) => (Number(b.Views) || 0) - (Number(a.Views) || 0)),
+              columns: [
+                { key: "Recipient Email", label: "Email" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+                { key: "sent_date", label: "Send Date" },
+                { key: "SDR_Name", label: "SDR" },
+              ],
+            },
+            totalClicks: {
+              title: "Total Clicks",
+              rows: [...(filteredSendOpen || [])].sort((a, b) => (Number(b.Clicks) || 0) - (Number(a.Clicks) || 0)),
+              columns: [
+                { key: "Recipient Email", label: "Email" },
+                { key: "Clicks", label: "Clicks" },
+                { key: "Views", label: "Views" },
+                { key: "sent_date", label: "Send Date" },
+                { key: "SDR_Name", label: "SDR" },
+              ],
+            },
+            accountsOwned: {
+              title: "Accounts Owned",
+              rows: filteredForAnalysis || [],
+              columns: [
+                { key: "Company Name", label: "Company" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "sent_date", label: "Send Date" },
+                { key: "SDR_Name", label: "SDR" },
+              ],
+            },
+            contactMatch: {
+              title: "Contact Match %",
+              rows: filteredForAnalysis || [],
+              columns: [
+                { key: "sent_date", label: "Send Date" },
+                { key: "recipient_name", label: "Recipient" },
+                { key: "Recipient Email", label: "Email" },
+                { key: "Company Name", label: "Company" },
+                { key: "Views", label: "Views" },
+                { key: "Clicks", label: "Clicks" },
+                { key: "SDR_Name", label: "SDR" },
+              ],
+            },
+            highEngagement: {
+              title: "High Engagement (Views > 2× Emails)",
+              rows: companyMatrixRows || [],
+              columns: [
+                { key: "company", label: "Company" },
+                { key: "emails", label: "Emails" },
+                { key: "views", label: "Views" },
+                { key: "clicks", label: "Clicks" },
+                { key: "engagementRate", label: "Engagement Rate %" },
+              ],
+            },
+          }[kpiRecordsDialog];
+          if (!config) return null;
+          const { title, rows, columns } = config;
+          return (
+            <Dialog
+              open={!!kpiRecordsDialog}
+              onClose={() => setKpiRecordsDialog(null)}
+              maxWidth="lg"
+              fullWidth
+            >
+              <DialogTitle sx={{ bgcolor: "#111827", color: "white", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontWeight: 600 }}>{title}</span>
+                <IconButton onClick={() => setKpiRecordsDialog(null)} sx={{ color: "white", "&:hover": { bgcolor: "rgba(255,255,255,0.2)" } }}>
+                  <CloseIcon />
+                </IconButton>
+              </DialogTitle>
+              <DialogContent sx={{ p: 0 }}>
+                <div className="p-4 bg-gray-50 border-b border-gray-200">
+                  <p className="text-sm text-gray-600">
+                    {rows.length.toLocaleString()} record{rows.length !== 1 ? "s" : ""}
+                  </p>
+                </div>
+                <div className="overflow-auto" style={{ maxHeight: "60vh" }}>
+                  {rows.length === 0 ? (
+                    <p className="p-6 text-center text-gray-500">No records found.</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-100 sticky top-0">
+                        <tr>
+                          {columns.map((col) => (
+                            <th key={col.key} className="px-4 py-3 text-left font-semibold text-gray-700 border-b border-gray-200">
+                              {col.label}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.slice(0, 500).map((row, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50 border-b border-gray-100">
+                            {columns.map((col) => (
+                              <td key={col.key} className="px-4 py-2 text-gray-900">
+                                {row[col.key] != null ? String(row[col.key]) : ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                {rows.length > 500 && (
+                  <div className="p-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-500">
+                    Showing first 500 of {rows.length.toLocaleString()} records.
+                  </div>
+                )}
+              </DialogContent>
+              <DialogActions sx={{ p: 2, bgcolor: "#f9fafb" }}>
+                <Button onClick={() => setKpiRecordsDialog(null)} variant="contained">
+                  Close
+                </Button>
+              </DialogActions>
+            </Dialog>
+          );
+        })()}
+
         {/* Upload Data Modal */}
         <Dialog
           open={modalOpen}
@@ -2734,14 +2919,16 @@ function EmailAnalyticsPage() {
                           value: derivedMetrics.totalSends.toLocaleString(), 
                           helper: "All filtered send records",
                           delay: 0, 
-                          color: "primary" 
+                          color: "primary",
+                          recordsKey: "totalSends"
                         },
                         { 
                           title: "Total Prospects", 
                           value: derivedMetrics.totalProspects.toLocaleString(), 
                           helper: "Unique recipient emails",
                           delay: 100, 
-                          color: "primary" 
+                          color: "primary",
+                          recordsKey: "totalProspects"
                         },
                         {
                           title: "Open Rate",
@@ -2749,6 +2936,7 @@ function EmailAnalyticsPage() {
                           helper: "% with non-null views",
                           delay: 200,
                           color: "success",
+                          recordsKey: "openRate"
                         },
                         {
                           title: "Opened Prospects",
@@ -2756,6 +2944,7 @@ function EmailAnalyticsPage() {
                           helper: "Unique prospects opened",
                           delay: 300,
                           color: "success",
+                          recordsKey: "openedProspects"
                         },
                         {
                           title: "Prospect Opened %",
@@ -2763,20 +2952,23 @@ function EmailAnalyticsPage() {
                           helper: "% of prospects who opened",
                           delay: 400,
                           color: "success",
+                          recordsKey: "prospectOpenedPct"
                         },
                         { 
                           title: "Total Views", 
                           value: derivedMetrics.totalViews.toLocaleString(), 
                           helper: "Sum of all views",
                           delay: 500, 
-                          color: "info" 
+                          color: "info",
+                          recordsKey: "totalViews"
                         },
                         { 
                           title: "Total Clicks", 
                           value: derivedMetrics.totalClicks.toLocaleString(), 
                           helper: "Sum of all clicks",
                           delay: 600, 
-                          color: "info" 
+                          color: "info",
+                          recordsKey: "totalClicks"
                         },
                         {
                           title: "Accounts Owned",
@@ -2784,6 +2976,7 @@ function EmailAnalyticsPage() {
                           helper: "Unique company IDs",
                           delay: 700,
                           color: "primary",
+                          recordsKey: "accountsOwned"
                         },
                         {
                           title: "Contact Match %",
@@ -2791,6 +2984,7 @@ function EmailAnalyticsPage() {
                           helper: "Matched with contacts",
                           delay: 800,
                           color: "success",
+                          recordsKey: "contactMatch"
                         },
                         {
                           title: "High Engagement",
@@ -2798,6 +2992,7 @@ function EmailAnalyticsPage() {
                           helper: "Views > 2× emails",
                           delay: 900,
                           color: "success",
+                          recordsKey: "highEngagement"
                         },
                       ].map((kpi, idx) => (
                       <div 
@@ -2813,6 +3008,7 @@ function EmailAnalyticsPage() {
                                 value={kpi.value}
                                 helper={kpi.helper}
                                 color={kpi.color}
+                                onInfoClick={() => setKpiRecordsDialog(kpi.recordsKey)}
                               />
                       </div>
                       ))}

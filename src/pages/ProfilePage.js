@@ -45,6 +45,22 @@ function ProfilePage() {
   const [uploadSuccess, setUploadSuccess] = useState({ gmail: false, mailsuite: false, contacts: false });
   const [uploadError, setUploadError] = useState({ gmail: "", mailsuite: "", contacts: "" });
 
+  // Upload preview modal (before Gmail/MailSuite upload)
+  const [uploadPreview, setUploadPreview] = useState({
+    open: false,
+    type: null,
+    file: null,
+    total: 0,
+    toUpload: 0,
+    toSkip: 0,
+    filterString: null,
+    userFilterOverride: '',
+    domainsToSkip: '',
+    records: [],
+    skippedRecords: [],
+    selectedIndices: new Set(),
+  });
+
   // Gmail integration state
   const [gmailSignedIn, setGmailSignedIn] = useState(false);
   const [gmailUserEmail, setGmailUserEmail] = useState(null);
@@ -192,29 +208,259 @@ function ProfilePage() {
     }
   };
 
+  const getEmailBodyFromRecord = (record) => {
+    if (!record || typeof record !== 'object') return '';
+    return record['Body'] || record['body'] || record['Email Body'] || record['email_body'] ||
+      record['Message'] || record['message'] || record['Content'] || record['content'] ||
+      record['Snippet'] || record['snippet'] || '';
+  };
+
+  const getDisplayEmail = (record) => {
+    if (!record || typeof record !== 'object') return '';
+    const direct = record['Recipient Email'] || record['recipient_email'] || record['Email'] || record['email'] || record['To'] || record['to'] || '';
+    if (direct && direct.includes('@')) return direct.trim();
+    const combined = record['Recipient'] || record['recipient'] || record['To'] || record['to'] || record['Recipient Name'] || record['recipient_name'] || '';
+    const match = String(combined).match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+/);
+    return match ? match[0] : '';
+  };
+
+  const getDomainFromRecord = (record) => {
+    if (!record || typeof record !== 'object') return '';
+    const domain = record['Domain'] || record['domain'] || '';
+    if (domain) return String(domain).toLowerCase().trim();
+    const email = record['Recipient Email'] || record['recipient_email'] || record['Email'] || record['email'] || '';
+    if (email && email.includes('@')) return email.split('@')[1].toLowerCase().trim();
+    const recipient = record['Recipient'] || record['recipient'] || '';
+    const match = recipient.match(/@([^\s,]+)/);
+    return match ? match[1].toLowerCase().trim() : '';
+  };
+
+  const parseDomainsToSkip = (str) => {
+    if (!str || !str.trim()) return new Set();
+    return new Set(
+      str
+        .split(/[\n,]+/)
+        .map((d) => d.trim().toLowerCase())
+        .filter((d) => d && !d.startsWith('@'))
+    );
+  };
+
+  const isWarmupRecord = (record, filterString) => {
+    if (!filterString || !filterString.trim()) return false;
+    const body = getEmailBodyFromRecord(record);
+    if (!body) return false;
+    return String(body).toLowerCase().includes(filterString.trim().toLowerCase());
+  };
+
+  const computePreviewFromRecords = (records, effectiveFilter, domainsToSkipStr) => {
+    const recs = Array.isArray(records) ? records : [];
+    const skipDomains = parseDomainsToSkip(domainsToSkipStr);
+    const warmupIndices = new Set();
+    const domainSkipIndices = new Set();
+    recs.forEach((r, i) => {
+      if (r && isWarmupRecord(r, effectiveFilter)) warmupIndices.add(i);
+      const dom = getDomainFromRecord(r);
+      if (dom && skipDomains.has(dom)) domainSkipIndices.add(i);
+    });
+    const excludeIndices = new Set([...warmupIndices, ...domainSkipIndices]);
+    const selectedIndices = new Set();
+    recs.forEach((_, i) => {
+      if (!excludeIndices.has(i)) selectedIndices.add(i);
+    });
+    const toSkip = recs.length - selectedIndices.size;
+    const toUpload = selectedIndices.size;
+    const skippedRecords = [...excludeIndices].slice(0, 100).map(i => ({
+      ...(recs[i] || {}),
+      _row: i + 2,
+    }));
+    return { toUpload, toSkip, skippedRecords, selectedIndices };
+  };
+
+  const buildUploadPreview = async (file, type) => {
+    if (!file || typeof file.text !== 'function') {
+      throw new Error('Invalid file');
+    }
+    const text = await file.text();
+    if (!text || typeof text !== 'string') {
+      throw new Error('File is empty');
+    }
+    let parsed;
+    try {
+      parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+    } catch (e) {
+      throw new Error('Failed to parse CSV: ' + (e?.message || 'Invalid format'));
+    }
+    const records = Array.isArray(parsed?.data) ? parsed.data : [];
+    if (records.length === 0) {
+      throw new Error('No records found in CSV');
+    }
+    let filterString = null;
+    try {
+      const { filterString: fs } = await dataApi.getWarmupFilter();
+      filterString = fs ?? null;
+    } catch (_) {
+      filterString = null;
+    }
+    const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(records, filterString, '');
+    return {
+      open: true,
+      type,
+      file,
+      total: records.length,
+      toUpload,
+      toSkip,
+      filterString,
+      userFilterOverride: '',
+      domainsToSkip: '',
+      records,
+      skippedRecords,
+      selectedIndices: selectedIndices instanceof Set ? selectedIndices : new Set(),
+    };
+  };
+
+  const handleUserFilterChange = (value) => {
+    setUploadPreview((prev) => {
+      const effectiveFilter = (value || '').trim() ? (value || '').trim() : prev.filterString;
+      const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(prev.records || [], effectiveFilter, prev.domainsToSkip || '');
+      return {
+        ...prev,
+        userFilterOverride: value ?? '',
+        toUpload,
+        toSkip,
+        skippedRecords,
+        selectedIndices,
+      };
+    });
+  };
+
+  const handleDomainsToSkipChange = (value) => {
+    setUploadPreview((prev) => {
+      const effectiveFilter = (prev.userFilterOverride || '').trim() ? (prev.userFilterOverride || '').trim() : prev.filterString;
+      const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(prev.records || [], effectiveFilter, value || '');
+      return {
+        ...prev,
+        domainsToSkip: value ?? '',
+        toUpload,
+        toSkip,
+        skippedRecords,
+        selectedIndices,
+      };
+    });
+  };
+
+  const handleToggleRecord = (index) => {
+    setUploadPreview((prev) => {
+      const current = prev.selectedIndices instanceof Set ? prev.selectedIndices : new Set();
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      const recCount = Array.isArray(prev.records) ? prev.records.length : 0;
+      return {
+        ...prev,
+        selectedIndices: next,
+        toUpload: next.size,
+        toSkip: recCount - next.size,
+      };
+    });
+  };
+
+  const handleSelectAll = () => {
+    setUploadPreview((prev) => {
+      const records = prev.records || [];
+      const next = new Set(records.map((_, i) => i));
+      return { ...prev, selectedIndices: next, toUpload: next.size, toSkip: 0 };
+    });
+  };
+
+  const handleDeselectAll = () => {
+    setUploadPreview((prev) => ({
+      ...prev,
+      selectedIndices: new Set(),
+      toUpload: 0,
+      toSkip: prev.records?.length || 0,
+    }));
+  };
+
+  const handleSelectNonWarmup = () => {
+    setUploadPreview((prev) => {
+      const effectiveFilter = (prev.userFilterOverride || '').trim() ? (prev.userFilterOverride || '').trim() : prev.filterString;
+      const { toUpload, toSkip, selectedIndices } = computePreviewFromRecords(prev.records || [], effectiveFilter, prev.domainsToSkip || '');
+      return { ...prev, selectedIndices, toUpload, toSkip };
+    });
+  };
+
   const handleGmailSendUpload = async () => {
-    if (!gmailSendFile || !user?._id && !user?.id) {
+    if (!gmailSendFile || (!user?._id && !user?.id)) {
       setUploadError({ ...uploadError, gmail: "Please select a file" });
       return;
     }
-
-    setUploadingGmail(true);
     setUploadError({ ...uploadError, gmail: "" });
-    setUploadSuccess({ ...uploadSuccess, gmail: false });
-
     try {
-      const sdrId = user._id || user.id;
-      const result = await dataApi.uploadGmailSend(sdrId, gmailSendFile);
-      setUploadSuccess({ ...uploadSuccess, gmail: true });
-      setGmailSendFile(null);
-      setGmailFetchedData(null);
-      loadStats();
-      setTimeout(() => setUploadSuccess({ ...uploadSuccess, gmail: false }), 3000);
+      const preview = await buildUploadPreview(gmailSendFile, 'gmail');
+      setUploadPreview(preview);
     } catch (err) {
-      console.error('Upload error:', err);
-      setUploadError({ ...uploadError, gmail: err.message || "Failed to upload file" });
-    } finally {
-      setUploadingGmail(false);
+      setUploadError({ ...uploadError, gmail: err.message || "Failed to load preview" });
+    }
+  };
+
+  const handleApproveAndUpload = async () => {
+    const { type, file, records, selectedIndices } = uploadPreview;
+    if (!file || !type || (!user?._id && !user?.id)) return;
+    const sel = selectedIndices instanceof Set ? selectedIndices : new Set();
+    if (sel.size === 0) {
+      setUploadError({ ...uploadError, [type === 'gmail' ? 'gmail' : 'mailsuite']: "Select at least one record to upload" });
+      return;
+    }
+    const recs = Array.isArray(records) ? records : [];
+    const selectedRecords = recs.filter((_, i) => sel.has(i));
+    if (selectedRecords.length === 0) {
+      setUploadError({ ...uploadError, [type === 'gmail' ? 'gmail' : 'mailsuite']: "No valid records to upload" });
+      return;
+    }
+    let csv;
+    try {
+      const columns = recs.length && selectedRecords.length && recs[0] ? Object.keys(recs[0]).filter(k => k !== '_row') : [];
+      csv = columns.length ? Papa.unparse(selectedRecords, { columns }) : Papa.unparse(selectedRecords);
+    } catch (e) {
+      setUploadError({ ...uploadError, [type === 'gmail' ? 'gmail' : 'mailsuite']: "Failed to prepare upload: " + (e?.message || "Unknown error") });
+      return;
+    }
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const uploadFile = new File([blob], file.name || "upload.csv", { type: "text/csv" });
+    setUploadPreview({ ...uploadPreview, open: false });
+    if (type === 'gmail') {
+      setUploadingGmail(true);
+      setUploadError({ ...uploadError, gmail: "" });
+      setUploadSuccess({ ...uploadSuccess, gmail: false });
+      try {
+        const sdrId = user._id || user.id;
+        await dataApi.uploadGmailSend(sdrId, uploadFile);
+        setUploadSuccess({ ...uploadSuccess, gmail: true });
+        setGmailSendFile(null);
+        setGmailFetchedData(null);
+        loadStats();
+        setTimeout(() => setUploadSuccess({ ...uploadSuccess, gmail: false }), 3000);
+      } catch (err) {
+        setUploadError({ ...uploadError, gmail: err.message || "Failed to upload file" });
+      } finally {
+        setUploadingGmail(false);
+      }
+    } else if (type === 'mailsuite') {
+      setUploadingMailSuite(true);
+      setUploadError({ ...uploadError, mailsuite: "" });
+      setUploadSuccess({ ...uploadSuccess, mailsuite: false });
+      try {
+        const sdrId = user._id || user.id;
+        await dataApi.uploadMailSuite(sdrId, uploadFile);
+        setUploadSuccess({ ...uploadSuccess, mailsuite: true });
+        setMailsuiteFile(null);
+        loadStats();
+        setTimeout(() => setUploadSuccess({ ...uploadSuccess, mailsuite: false }), 3000);
+      } catch (err) {
+        setUploadError({ ...uploadError, mailsuite: err.message || "Failed to upload file" });
+      } finally {
+        setUploadingMailSuite(false);
+      }
     }
   };
 
@@ -365,28 +611,8 @@ function ProfilePage() {
       const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
       const file = new File([blob], `gmail-sent-emails-${Date.now()}.csv`, { type: "text/csv" });
       
-      // Always set the file to the upload field
+      // Set the file - user must click "Upload" to see preview and approve
       setGmailSendFile(file);
-      
-      // Auto-upload the fetched data
-      if (user?._id || user?.id) {
-        setUploadingGmail(true);
-        setUploadError({ ...uploadError, gmail: "" });
-        setUploadSuccess({ ...uploadSuccess, gmail: false });
-
-        try {
-          const sdrId = user._id || user.id;
-          const result = await dataApi.uploadGmailSend(sdrId, file);
-          setUploadSuccess({ ...uploadSuccess, gmail: true });
-          loadStats();
-          setTimeout(() => setUploadSuccess({ ...uploadSuccess, gmail: false }), 3000);
-        } catch (err) {
-          console.error('Upload error:', err);
-          setUploadError({ ...uploadError, gmail: err.message || "Failed to upload file" });
-        } finally {
-          setUploadingGmail(false);
-        }
-      }
     } catch (error) {
       console.error("Error fetching Gmail data:", error);
       
@@ -412,27 +638,16 @@ function ProfilePage() {
   };
 
   const handleMailSuiteUpload = async () => {
-    if (!mailsuiteFile || !user?._id && !user?.id) {
+    if (!mailsuiteFile || (!user?._id && !user?.id)) {
       setUploadError({ ...uploadError, mailsuite: "Please select a file" });
       return;
     }
-
-    setUploadingMailSuite(true);
     setUploadError({ ...uploadError, mailsuite: "" });
-    setUploadSuccess({ ...uploadSuccess, mailsuite: false });
-
     try {
-      const sdrId = user._id || user.id;
-      const result = await dataApi.uploadMailSuite(sdrId, mailsuiteFile);
-      setUploadSuccess({ ...uploadSuccess, mailsuite: true });
-      setMailsuiteFile(null);
-      loadStats();
-      setTimeout(() => setUploadSuccess({ ...uploadSuccess, mailsuite: false }), 3000);
+      const preview = await buildUploadPreview(mailsuiteFile, 'mailsuite');
+      setUploadPreview(preview);
     } catch (err) {
-      console.error('Upload error:', err);
-      setUploadError({ ...uploadError, mailsuite: err.message || "Failed to upload file" });
-    } finally {
-      setUploadingMailSuite(false);
+      setUploadError({ ...uploadError, mailsuite: err.message || "Failed to load preview" });
     }
   };
 
@@ -487,6 +702,171 @@ function ProfilePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
+      {/* Upload Preview Modal */}
+      {uploadPreview.open && (
+        <div className="fixed inset-0 z-50 bg-black/30">
+          <div className="absolute inset-0 bg-white overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">
+                {uploadPreview.type === 'gmail' ? 'Gmail' : 'MailSuite'} Upload Preview
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Select or deselect records. Only selected records will be uploaded.
+              </p>
+            </div>
+            <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500">Total Records</p>
+                  <p className="text-lg font-bold text-gray-900">{uploadPreview.total}</p>
+                </div>
+                <div className="bg-green-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500">To Upload</p>
+                  <p className="text-lg font-bold text-green-700">{uploadPreview.toUpload}</p>
+                </div>
+                <div className="bg-amber-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500">Excluded</p>
+                  <p className="text-lg font-bold text-amber-700">{uploadPreview.toSkip}</p>
+                </div>
+                <div className="col-span-2 sm:col-span-4">
+                  <p className="text-xs text-gray-500 mb-2">Filter String</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={uploadPreview.userFilterOverride}
+                      onChange={(e) => handleUserFilterChange(e.target.value)}
+                      placeholder={uploadPreview.filterString || "Enter string to filter warmup emails (e.g. warmup)"}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {uploadPreview.filterString && !uploadPreview.userFilterOverride
+                      ? `Server default: "${uploadPreview.filterString}"`
+                      : uploadPreview.userFilterOverride
+                        ? `Using: "${uploadPreview.userFilterOverride}"`
+                        : "Leave empty or enter a string. Emails whose body contains it will be skipped."}
+                  </p>
+                </div>
+                <div className="col-span-2 sm:col-span-4">
+                  <p className="text-xs text-gray-500 mb-2">Domains to skip</p>
+                  <textarea
+                    value={uploadPreview.domainsToSkip || ''}
+                    onChange={(e) => handleDomainsToSkipChange(e.target.value)}
+                    placeholder={"Enter domains to exclude (one per line or comma-separated)\ne.g. example.com, test.org"}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-y"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Records whose email domain matches any of these will be excluded from upload.
+                  </p>
+                </div>
+              </div>
+              <div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <p className="text-sm font-semibold text-gray-700">
+                      Select records to upload ({uploadPreview.toUpload} selected)
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSelectAll}
+                        className="px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 rounded hover:bg-blue-100"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDeselectAll}
+                        className="px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200"
+                      >
+                        Deselect All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSelectNonWarmup}
+                        className="px-2 py-1 text-xs font-medium text-amber-700 bg-amber-50 rounded hover:bg-amber-100"
+                      >
+                        Select Non-Warmup
+                      </button>
+                    </div>
+                  </div>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden max-h-[60vh] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-100 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left w-10">
+                            <input
+                              type="checkbox"
+                              checked={(uploadPreview.records?.length || 0) > 0 && (uploadPreview.selectedIndices?.size || 0) === (uploadPreview.records?.length || 0)}
+                              onChange={(e) => (e.target.checked ? handleSelectAll() : handleDeselectAll())}
+                              className="rounded border-gray-300"
+                            />
+                          </th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Row</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Recipient</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Email</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Date</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-600">Body (snippet)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(uploadPreview.records || []).map((r, i) => {
+                          const isSelected = uploadPreview.selectedIndices?.has(i);
+                          const body = getEmailBodyFromRecord(r);
+                          const snippet = body ? (body.length > 60 ? body.slice(0, 60) + '…' : body) : '-';
+                          return (
+                            <tr
+                              key={i}
+                              className={`border-t border-gray-100 ${isSelected ? 'bg-green-50/50 hover:bg-green-50' : 'bg-amber-50/30 hover:bg-amber-50'}`}
+                            >
+                              <td className="px-3 py-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!isSelected}
+                                  onChange={() => handleToggleRecord(i)}
+                                  className="rounded border-gray-300"
+                                />
+                              </td>
+                              <td className="px-3 py-2 text-gray-600">{i + 2}</td>
+                              <td className="px-3 py-2 truncate max-w-[100px]" title={r['Recipient Name'] || r['recipient_name'] || r['Recipient'] || r['recipient'] || r['To'] || r['to'] || ''}>
+                                {r['Recipient Name'] || r['recipient_name'] || r['Recipient'] || r['recipient'] || r['To'] || r['to'] || '-'}
+                              </td>
+                              <td className="px-3 py-2 truncate max-w-[150px]" title={getDisplayEmail(r)}>
+                                {getDisplayEmail(r) || '-'}
+                              </td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                                {r['Date'] || r['sent_date'] || r['Sent'] || r['Sent Date'] || '-'}
+                              </td>
+                              <td className="px-3 py-2 text-gray-500 truncate max-w-[200px]" title={body || ''}>
+                                {snippet}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => setUploadPreview({ ...uploadPreview, open: false })}
+                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApproveAndUpload}
+                disabled={(uploadPreview.selectedIndices?.size || 0) === 0}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Approve & Upload {uploadPreview.toUpload > 0 && `(${uploadPreview.toUpload})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="mb-8 flex justify-between items-center">

@@ -176,11 +176,15 @@ export const sdrApi = {
 export const dataApi = {
   /**
    * Upload Gmail send CSV
+   * @param {string} sdrId - SDR ID
+   * @param {File} file - CSV file
+   * @param {string} [warmupFilter] - Optional warmup filter string (overrides server env)
    */
-  uploadGmailSend: async (sdrId, file) => {
+  uploadGmailSend: async (sdrId, file, warmupFilter) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      if (warmupFilter) formData.append('warmupFilter', warmupFilter);
 
       const response = await fetch(`${API_BASE_URL}/data/gmail-send/${sdrId}`, {
         method: 'POST',
@@ -215,11 +219,15 @@ export const dataApi = {
 
   /**
    * Upload MailSuite CSV
+   * @param {string} sdrId - SDR ID
+   * @param {File} file - CSV file
+   * @param {string} [warmupFilter] - Optional warmup filter string (overrides server env)
    */
-  uploadMailSuite: async (sdrId, file) => {
+  uploadMailSuite: async (sdrId, file, warmupFilter) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      if (warmupFilter) formData.append('warmupFilter', warmupFilter);
 
       const response = await fetch(`${API_BASE_URL}/data/mailsuite/${sdrId}`, {
         method: 'POST',
@@ -250,6 +258,17 @@ export const dataApi = {
       }
       throw error;
     }
+  },
+
+  /**
+   * Get warmup filter string from server (used for upload preview)
+   */
+  getWarmupFilter: async () => {
+    const response = await fetch(`${API_BASE_URL}/data/warmup-filter`, {
+      headers: getAuthHeaders(),
+    });
+    if (!response.ok) throw new Error('Failed to fetch warmup filter');
+    return response.json();
   },
 
   /**
