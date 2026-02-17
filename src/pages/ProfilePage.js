@@ -61,6 +61,12 @@ function ProfilePage() {
     selectedIndices: new Set(),
   });
 
+  // Pre-upload filters on tabs (exclude warmup, filter by domain)
+  const [uploadTabFilters, setUploadTabFilters] = useState({
+    gmail: { warmupFilter: '', domainsToSkip: '' },
+    mailsuite: { warmupFilter: '', domainsToSkip: '' },
+  });
+
   // Gmail integration state
   const [gmailSignedIn, setGmailSignedIn] = useState(false);
   const [gmailUserEmail, setGmailUserEmail] = useState(null);
@@ -397,6 +403,17 @@ function ProfilePage() {
     setUploadError({ ...uploadError, gmail: "" });
     try {
       const preview = await buildUploadPreview(gmailSendFile, 'gmail');
+      const warmup = (uploadTabFilters.gmail?.warmupFilter || '').trim();
+      const domains = uploadTabFilters.gmail?.domainsToSkip || '';
+      preview.userFilterOverride = warmup;
+      preview.domainsToSkip = domains;
+      const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(
+        preview.records || [], warmup || preview.filterString, domains
+      );
+      preview.toUpload = toUpload;
+      preview.toSkip = toSkip;
+      preview.skippedRecords = skippedRecords;
+      preview.selectedIndices = selectedIndices;
       setUploadPreview(preview);
     } catch (err) {
       setUploadError({ ...uploadError, gmail: err.message || "Failed to load preview" });
@@ -645,6 +662,17 @@ function ProfilePage() {
     setUploadError({ ...uploadError, mailsuite: "" });
     try {
       const preview = await buildUploadPreview(mailsuiteFile, 'mailsuite');
+      const warmup = (uploadTabFilters.mailsuite?.warmupFilter || '').trim();
+      const domains = uploadTabFilters.mailsuite?.domainsToSkip || '';
+      preview.userFilterOverride = warmup;
+      preview.domainsToSkip = domains;
+      const { toUpload, toSkip, skippedRecords, selectedIndices } = computePreviewFromRecords(
+        preview.records || [], warmup || preview.filterString, domains
+      );
+      preview.toUpload = toUpload;
+      preview.toSkip = toSkip;
+      preview.skippedRecords = skippedRecords;
+      preview.selectedIndices = selectedIndices;
       setUploadPreview(preview);
     } catch (err) {
       setUploadError({ ...uploadError, mailsuite: err.message || "Failed to load preview" });
@@ -1152,6 +1180,48 @@ function ProfilePage() {
                 <div>
                   <h2 className="text-xl font-semibold text-gray-900 mb-4">Upload Gmail Send CSV</h2>
                   
+                  {/* Reminder: Exclude warmup & filter by domain */}
+                  <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm font-medium text-amber-800 flex items-center gap-2">
+                      <span>⚠️</span>
+                      Remember to exclude warmup emails and filter by domain before uploading for accurate analytics.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Set your filters below — they will be applied in the upload preview.
+                    </p>
+                  </div>
+
+                  {/* Pre-upload filters on tab */}
+                  <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
+                    <p className="text-sm font-semibold text-gray-700">Pre-upload filters</p>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Warmup filter (e.g. warmup, instantly)</label>
+                      <input
+                        type="text"
+                        value={uploadTabFilters.gmail?.warmupFilter || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({
+                          ...prev,
+                          gmail: { ...prev.gmail, warmupFilter: e.target.value }
+                        }))}
+                        placeholder="Enter string to exclude warmup emails from body"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Domains to exclude (one per line or comma-separated)</label>
+                      <textarea
+                        value={uploadTabFilters.gmail?.domainsToSkip || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({
+                          ...prev,
+                          gmail: { ...prev.gmail, domainsToSkip: e.target.value }
+                        }))}
+                        placeholder="e.g. warmup.com, test.org"
+                        rows={2}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-y"
+                      />
+                    </div>
+                  </div>
+
                   {/* Gmail Integration Section */}
                   <div className="mb-6 border-2 border-blue-500 rounded-lg overflow-hidden bg-white">
                     <div className="bg-blue-600 px-4 py-3">
@@ -1450,6 +1520,49 @@ function ProfilePage() {
               <div className="space-y-6">
                 <div>
                   <h2 className="text-xl font-semibold text-gray-900 mb-4">Upload MailSuite CSV</h2>
+                  
+                  {/* Reminder: Exclude warmup & filter by domain */}
+                  <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm font-medium text-amber-800 flex items-center gap-2">
+                      <span>⚠️</span>
+                      Remember to exclude warmup emails and filter by domain before uploading for accurate analytics.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Set your filters below — they will be applied in the upload preview.
+                    </p>
+                  </div>
+
+                  {/* Pre-upload filters on tab */}
+                  <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
+                    <p className="text-sm font-semibold text-gray-700">Pre-upload filters</p>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Warmup filter (e.g. warmup, instantly)</label>
+                      <input
+                        type="text"
+                        value={uploadTabFilters.mailsuite?.warmupFilter || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({
+                          ...prev,
+                          mailsuite: { ...prev.mailsuite, warmupFilter: e.target.value }
+                        }))}
+                        placeholder="Enter string to exclude warmup emails from body"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Domains to exclude (one per line or comma-separated)</label>
+                      <textarea
+                        value={uploadTabFilters.mailsuite?.domainsToSkip || ''}
+                        onChange={(e) => setUploadTabFilters(prev => ({
+                          ...prev,
+                          mailsuite: { ...prev.mailsuite, domainsToSkip: e.target.value }
+                        }))}
+                        placeholder="e.g. warmup.com, test.org"
+                        rows={2}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none resize-y"
+                      />
+                    </div>
+                  </div>
+
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
